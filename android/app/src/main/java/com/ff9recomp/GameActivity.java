@@ -68,7 +68,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         crt = prefs.getBoolean("crt_filter", false);
         setContentView(root);
         // Smooth 120: ask the display for its fastest mode at this resolution (the Thor's 120 Hz)
-        if (prefs.getInt("fps", 0) == 2) preferHighestRefreshRate();
+        preferRefreshRate(prefs.getInt("fps", 1) == 2 ? 120 : 60);
         if (prefs.getBoolean("bottom_screen", true)) showCompanion();
         ui.post(poller);
         updateTouch();
@@ -184,12 +184,16 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         v.vibrate(android.os.VibrationEffect.createOneShot(120, v.hasAmplitudeControl() ? amp : android.os.VibrationEffect.DEFAULT_AMPLITUDE));
     }
 
-    private void preferHighestRefreshRate() {
+    /** The display mode at this resolution nearest the game's frame rate: 120 Hz for Smooth 120,
+     *  else 60 (the Thor defaults to 120; 60 saves power when the game draws 60 or fewer). */
+    private void preferRefreshRate(float want) {
         android.view.Display d = getDisplay();
         if (d == null) return;
-        android.view.Display.Mode cur = d.getMode(), best = cur;
+        android.view.Display.Mode cur = d.getMode(), best = null;
         for (android.view.Display.Mode m : d.getSupportedModes())
-            if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() > best.getRefreshRate()) best = m;
+            if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                    && (best == null || Math.abs(m.getRefreshRate() - want) < Math.abs(best.getRefreshRate() - want))) best = m;
+        if (best == null) return;
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         lp.preferredDisplayModeId = best.getModeId();
         getWindow().setAttributes(lp);

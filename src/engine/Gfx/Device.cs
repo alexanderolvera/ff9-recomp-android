@@ -10,6 +10,7 @@ public static unsafe class Device {
     public static IntPtr Display, Surface, Context;
     public static int Width = 1920, Height = 1080;
     public static bool Ready;
+    public static bool HasWindow => NativeWindow != IntPtr.Zero;
     public static IntPtr NativeWindow;      // set by the APK before Init
 
     [System.Runtime.InteropServices.DllImport("__Internal")] static extern IntPtr ff9_get_native_window();

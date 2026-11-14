@@ -29,7 +29,7 @@ final class Settings {
     }
 
     static final Option[] OPTIONS = {
-        new Option("fps", "Frame rate", "Original: fields 30, battles 15, as the game was made. Smooth: Memoria fills in frames.", 0,
+        new Option("fps", "Frame rate", "Original: fields 30, battles 15, as the game was made. Smooth: Memoria fills in frames.", 1,
                 "Original", "Smooth 60", "Smooth 120"),
         new Option("start", "Start", "Continue: straight back to the place you were last (Memoria's autosave), skipping the title.", 0,
                 "Title screen", "Continue"),
@@ -89,10 +89,11 @@ final class Settings {
         if (!ini.isFile()) return;
         List<String> lines = new ArrayList<>(Files.readAllLines(ini.toPath(), StandardCharsets.ISO_8859_1));
         int fps = get(c, find("fps"));
-        String f = fps == 0 ? "-1" : fps == 1 ? "60" : "120";
-        put(lines, "Graphics", "BattleFPS", f);
-        put(lines, "Graphics", "FieldFPS", f);
-        put(lines, "Graphics", "WorldFPS", f);
+        // Original: the game's own rates (fields 30, battles 15, world 20); Smooth: Memoria draws
+        // in-between frames at 60 or 120. Not -1 ("the display's rate"): 120 on the Thor, hot.
+        put(lines, "Graphics", "BattleFPS", fps == 0 ? "15" : fps == 1 ? "60" : "120");
+        put(lines, "Graphics", "FieldFPS", fps == 0 ? "30" : fps == 1 ? "60" : "120");
+        put(lines, "Graphics", "WorldFPS", fps == 0 ? "20" : fps == 1 ? "60" : "120");
         put(lines, "Graphics", "WidescreenSupport", on(c, "widescreen"));
         put(lines, "Graphics", "SkipIntros", get(c, find("skip_intros")) != 0 ? "3" : "0");
         put(lines, "Cheats", "Enabled", on(c, "boosters"));

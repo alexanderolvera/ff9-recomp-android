@@ -248,7 +248,7 @@ public class LauncherActivity extends Activity {
     /** A short note beside a choice, as FF7Recomp's frame-rate list has. */
     private static String choiceNote(String key, int i) {
         switch (key) {
-            case "fps": return new String[] { "As shipped: fields 30, battles 15", "Memoria fills in frames: everything at 60", "Fields and battles at 120 (experimental)" }[i];
+            case "fps": return new String[] { "As shipped: fields 30, battles 15", "Memoria fills in frames: everything at 60", "Fields and battles at 120 (experimental, warmer)" }[i];
             case "start": return new String[] { "As shipped", "Straight back to the place you were last" }[i];
             case "touch_controls": return new String[] { "Only when no controller is connected", "Always on screen", "Never" }[i];
             default: return null;

@@ -92,10 +92,18 @@ public static class Player {
         long next = 0;
         while (!Quit && Clock.Frame < maxFrames) {
             Frame();
-            if (fps > 0) {
-                next += Stopwatch.Frequency / fps;
+            // the game's Application.targetFrameRate, as Unity keeps it on Android: frames wait
+            // (sleeping, not spinning) instead of running as fast as the display allows. Headless
+            // tests run unpaced unless FF9_FPS asks.
+            int target = fps > 0 ? fps : Gfx.Device.HasWindow && Clock.TargetFrameRate > 0 ? Clock.TargetFrameRate : 0;
+            if (target > 0) {
+                next += Stopwatch.Frequency / target;
                 long wait = next - pace.ElapsedTicks;
-                if (wait > 0) System.Threading.Thread.Sleep((int)(wait * 1000 / Stopwatch.Frequency));
+                if (wait > 0) {
+                    int ms = (int)(wait * 1000 / Stopwatch.Frequency);
+                    if (ms > 1) System.Threading.Thread.Sleep(ms - 1);
+                    while (pace.ElapsedTicks < next) System.Threading.Thread.Yield();
+                }
                 else if (wait < -Stopwatch.Frequency / 4) next = pace.ElapsedTicks;
             }
         }

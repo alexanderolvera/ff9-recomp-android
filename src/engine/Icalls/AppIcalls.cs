@@ -33,7 +33,7 @@ static class AppIcalls {
     [Icall("UnityEngine.Application::get_runInBackground")] static bool GetRunInBg() => true;
     [Icall("UnityEngine.Application::set_runInBackground")] static void SetRunInBg(bool v) { }
     [Icall("UnityEngine.Application::get_targetFrameRate")] static int GetFps() => Clock.TargetFrameRate;
-    [Icall("UnityEngine.Application::set_targetFrameRate")] static void SetFps(int v) => Clock.TargetFrameRate = v;
+    [Icall("UnityEngine.Application::set_targetFrameRate")] static void SetFps(int v) { if (v != Clock.TargetFrameRate) Log.Info($"target frame rate {v}"); Clock.TargetFrameRate = v; }
     [Icall("UnityEngine.Application::get_systemLanguage")] static SystemLanguage Lang() => SystemLanguage.English;
     [Icall("UnityEngine.Application::get_internetReachability")] static NetworkReachability Net() => NetworkReachability.NotReachable;
     [Icall("UnityEngine.Application::SetLogCallbackDefined")] static void LogCb(bool d, bool t) { }
