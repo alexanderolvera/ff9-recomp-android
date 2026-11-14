@@ -31,6 +31,10 @@ PREFIX="-ffile-prefix-map=$(pwd -W 2>/dev/null || pwd)=ff9recomp"
   -o $OUT/jni/arm64-v8a/libff9.so
 "$TC/llvm-strip.exe" --strip-debug $OUT/jni/arm64-v8a/libff9.so
 
+# libff9launcher.so: the launcher's own native code (.7z mod unpacking, LZMA SDK, public domain)
+"$TC/clang.exe" --target=aarch64-linux-android30 -O2 -fPIC -shared $PREFIX -w -Ithird_party/lzma   src/launcher/un7z.c third_party/lzma/*.c -llog -Wl,-soname,libff9launcher.so -o $OUT/jni/arm64-v8a/libff9launcher.so
+"$TC/llvm-strip.exe" --strip-debug $OUT/jni/arm64-v8a/libff9launcher.so
+
 # Mono's native libraries (the runtime and its components)
 cp $N/*.so $OUT/jni/arm64-v8a/
 # class libraries and the engine, unpacked on first start

@@ -1,0 +1,155 @@
+package com.ff9recomp;
+
+import android.content.Context;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+/**
+ * Installs a catalog mod: downloads its archive (resumable: a cut download continues where it
+ * stopped), unpacks it (.zip in Java, .7z in native code: src/launcher/un7z.c, from FF7Recomp),
+ * puts its folder at game/<InstallationPath> (replacing an older version) and turns it on in
+ * Memoria.ini. One install at a time; the launcher shows the progress.
+ */
+final class ModDownloader {
+    static { System.loadLibrary("ff9launcher"); }
+    private static native String nativeUn7z(String archive, String outDir);
+    private static native void nativeUn7zCancel();
+    private static native long[] nativeUn7zProgress();
+
+    static volatile boolean busy, cancelled;
+    static volatile String status = "";
+
+    private ModDownloader() {}
+
+    static void cancel() {
+        cancelled = true;
+        try { nativeUn7zCancel(); } catch (Throwable ignored) { }
+    }
+
+    /** Runs on the caller's thread. */
+    static void install(Context c, ModCatalog.Mod m) throws IOException {
+        busy = true;
+        cancelled = false;
+        try {
+            File dl = new File(ModCatalog.dir(c), "downloads");
+            dl.mkdirs();
+            String ext = m.url.toLowerCase(Locale.ROOT).contains(".7z") || m.format.equalsIgnoreCase("7z") ? ".7z" : ".zip";
+            File archive = new File(dl, m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + "-" + m.version + ext);
+            download(c, m, archive);
+            File game = new GameInstall(c).game;
+            File unpack = new File(game, ".unpack-" + System.nanoTime());
+            try {
+                status = "Unpacking " + m.name;
+                if (ext.equals(".7z")) {
+                    Thread watch = new Thread(() -> {
+                        while (busy && status.startsWith("Unpacking")) {
+                            try {
+                                long[] p = nativeUn7zProgress();
+                                if (p != null && p[1] > 0) status = "Unpacking " + m.name + ": " + (100 * p[0] / p[1]) + "%";
+                                Thread.sleep(500);
+                            } catch (Throwable e) { return; }
+                        }
+                    });
+                    watch.setDaemon(true);
+                    watch.start();
+                    String err = nativeUn7z(archive.getPath(), unpack.getPath());
+                    if (err != null) throw new IOException(err);
+                } else {
+                    unzip(archive, unpack);
+                }
+                if (cancelled) throw new IOException("cancelled");
+                File root = modRoot(unpack, m.folder);
+                File dest = ModCatalog.folder(c, m);
+                if (dest.exists()) Storage.deleteTree(dest);
+                if (!root.renameTo(dest)) throw new IOException("cannot move the mod into the game folder");
+            } finally {
+                if (unpack.exists()) Storage.deleteTree(unpack);
+            }
+            ModCatalog.setInstalledVersion(c, m);
+            ModCatalog.setEnabled(c, m, true);
+            archive.delete();
+            status = m.name + " " + m.version + " installed and turned on.";
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** The folder holding the mod in the unpacked archive: the one named like it, else a lone top folder, else the top. */
+    static File modRoot(File unpacked, String folder) {
+        File[] top = unpacked.listFiles();
+        if (top == null) return unpacked;
+        for (File f : top) if (f.isDirectory() && f.getName().equalsIgnoreCase(folder)) return f;
+        if (top.length == 1 && top[0].isDirectory() && !new File(unpacked, "ModDescription.xml").isFile()) return top[0];
+        return unpacked;
+    }
+
+    private static void download(Context c, ModCatalog.Mod m, File to) throws IOException {
+        long have = to.isFile() ? to.length() : 0;
+        HttpURLConnection h = (HttpURLConnection) new URL(m.url).openConnection();
+        h.setRequestProperty("User-Agent", "FF9Recomp/" + Updater.installedVersion(c));
+        h.setInstanceFollowRedirects(true);
+        h.setConnectTimeout(20000);
+        h.setReadTimeout(60000);
+        if (have > 0) h.setRequestProperty("Range", "bytes=" + have + "-");
+        int code = h.getResponseCode();
+        if (code == 416) return;                                 // already complete
+        if (code != 200 && code != 206) throw new IOException("the download answered " + code);
+        if (code == 200) have = 0;                               // the server does not resume: start over
+        long total = h.getContentLengthLong() > 0 ? h.getContentLengthLong() + have : -1;
+        File where = new GameInstall(c).files;
+        if (total > 0 && where.getUsableSpace() < (total - have) + total * 2)
+            throw new IOException("not enough free space: the mod needs about " + Storage.human(total * 3) + ", "
+                    + Storage.human(where.getUsableSpace()) + " free");
+        try (InputStream in = new BufferedInputStream(h.getInputStream(), 1 << 16);
+             RandomAccessFile o = new RandomAccessFile(to, "rw")) {
+            o.setLength(have);
+            o.seek(have);
+            byte[] b = new byte[1 << 16];
+            long got = have, shown = 0;
+            for (int n; (n = in.read(b)) > 0; ) {
+                if (cancelled) throw new IOException("cancelled");
+                o.write(b, 0, n);
+                got += n;
+                if (got - shown >= (4L << 20)) {
+                    shown = got;
+                    status = "Downloading " + m.name + ": " + Storage.human(got) + (total > 0 ? " of " + Storage.human(total) : "");
+                }
+            }
+        }
+    }
+
+    private static void unzip(File zip, File out) throws IOException {
+        String base = out.getCanonicalPath() + File.separator;
+        try (ZipInputStream z = new ZipInputStream(new BufferedInputStream(new FileInputStream(zip), 1 << 16))) {
+            byte[] b = new byte[1 << 16];
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                if (cancelled) throw new IOException("cancelled");
+                File f = new File(out, e.getName());
+                if (!f.getCanonicalPath().startsWith(base)) throw new IOException("the archive has a bad path: " + e.getName());
+                if (e.isDirectory()) { f.mkdirs(); continue; }
+                f.getParentFile().mkdirs();
+                try (OutputStream o = new FileOutputStream(f)) {
+                    for (int n; (n = z.read(b)) > 0; ) o.write(b, 0, n);
+                }
+            }
+        }
+    }
+
+    static void remove(Context c, ModCatalog.Mod m) throws IOException {
+        ModCatalog.setEnabled(c, m, false);
+        Storage.deleteTree(ModCatalog.folder(c, m));
+        new File(ModCatalog.dir(c), m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + ".version").delete();
+    }
+}

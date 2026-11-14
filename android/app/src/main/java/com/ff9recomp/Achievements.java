@@ -38,7 +38,7 @@ final class Achievements {
 
     static String steamNote(Context c) {
         SteamLink s = new SteamLink(c);
-        if (!s.active()) return "not signed in (Settings > Steam)";
+        if (!s.active()) return "not signed in (Sign in to Steam, below)";
         int w = s.waiting();
         return "signed in as " + s.accountName() + (w > 0 ? ", " + w + " waiting to be sent" : ", all sent");
     }

@@ -139,12 +139,13 @@ public class LauncherActivity extends Activity {
 
     private void showMain() {
         page = "main";
-        newWindow("FF9Recomp");
+        newWindow("FF9Recomp", true);
         boolean has = install.hasGame();
         String missing = has ? install.missingMessage() : null;
         boolean ready = has && missing == null;
         TextView play = item("Play", ready ? "Start FINAL FANTASY IX." : "Import your game folder first.", this::play);
         play.setAlpha(ready ? 1f : 0.45f);
+        item("Mods", "Memoria's mod catalog: install, update, turn on or off.", this::showMods);
         item("Save states", "Resume a place you kept in game with Select+R1.", this::showStates);
         item("Achievements", "What you have unlocked in this copy.", this::showAchievements);
         item("Settings", "Frame rate, widescreen, boosters, controls, volume.", this::showSettings);
@@ -243,6 +244,94 @@ public class LauncherActivity extends Activity {
         int pid = TestControl.gamePid(this);
         if (pid > 0) android.os.Process.killProcess(pid);
         finishAndRemoveTask();
+    }
+
+    // ------------------------------------------------------------------ mods
+
+    private ModCatalog.Mod modShown;
+
+    private String modState(ModCatalog.Mod m) {
+        if (!ModCatalog.installed(this, m)) return "";
+        String s = ModCatalog.isEnabled(this, m) ? "  [on]" : "  [off]";
+        return ModCatalog.updatable(this, m) ? s + " update" : s;
+    }
+
+    private void showMods() {
+        page = "mods";
+        newWindow("Mods", true);
+        java.util.List<ModCatalog.Mod> all = ModCatalog.mods(this);
+        TextView first = item(all.isEmpty() ? "Get the catalog" : "Refresh the catalog", "Memoria's list of mods, from GitHub.", this::refreshCatalog);
+        for (ModCatalog.Mod m : all) {
+            TextView v = item(m.name + modState(m), m.category + (m.author.isEmpty() ? "" : " - by " + m.author) + ". Version " + m.version + ".", () -> showMod(m));
+            v.setTag(m);
+        }
+        status.setText(ModDownloader.busy ? ModDownloader.status : "Installed mods are turned on in Memoria.ini, highest priority first. B to go back.");
+        first.requestFocus();
+        if (ModDownloader.busy) pollMods();
+    }
+
+    private void refreshCatalog() {
+        busy = true;
+        status.setText("Getting the catalog...");
+        new Thread(() -> {
+            String m = null;
+            try { ModCatalog.refresh(this); } catch (Exception e) { m = "Could not get the catalog: " + e.getMessage(); }
+            String mm = m;
+            runOnUiThread(() -> { busy = false; showMods(); if (mm != null) status.setText(mm); });
+        }).start();
+    }
+
+    private void showMod(ModCatalog.Mod m) {
+        page = "mod";
+        modShown = m;
+        newWindow(m.name, true);
+        boolean inst = ModCatalog.installed(this, m), on = inst && ModCatalog.isEnabled(this, m);
+        TextView first;
+        if (!inst) first = item("Install " + m.version, "Download and unpack it into your game folder, then turn it on.", () -> installMod(m));
+        else {
+            first = item(on ? "Turn off" : "Turn on", null, () -> {
+                try { ModCatalog.setEnabled(this, m, !on); } catch (Exception e) { status.setText(e.getMessage()); return; }
+                showMod(m);
+            });
+            if (ModCatalog.updatable(this, m)) item("Update to " + m.version, "Installed: " + ModCatalog.installedVersion(this, m), () -> installMod(m));
+            item("Remove", "Delete the mod's folder from your game.", () -> {
+                try { ModDownloader.remove(this, m); } catch (Exception e) { status.setText(e.getMessage()); return; }
+                showMod(m);
+            });
+        }
+        if (ModDownloader.busy) item("Cancel the download", null, ModDownloader::cancel);
+        TextView d = new TextView(this);
+        d.setText(m.description.isEmpty() ? "" : m.description);
+        d.setTextColor(DIM);
+        d.setTextSize(14);
+        d.setPadding(dp(4), dp(10), dp(4), dp(4));
+        window.addView(d);
+        status.setText((m.author.isEmpty() ? "" : "By " + m.author + ". ") + "Folder: " + m.folder + ". B to go back.");
+        first.requestFocus();
+        if (ModDownloader.busy) pollMods();
+    }
+
+    private void installMod(ModCatalog.Mod m) {
+        if (ModDownloader.busy) { status.setText("One install at a time: " + ModDownloader.status); return; }
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first (Select+Start)."); return; }
+        ModDownloader.busy = true;
+        ModDownloader.status = "Starting " + m.name;
+        new Thread(() -> {
+            try { ModDownloader.install(this, m); }
+            catch (Exception e) { ModDownloader.status = m.name + ": " + e.getMessage() + (e.getMessage() != null && e.getMessage().equals("cancelled") ? "" : " (Install again to continue the download.)"); }
+        }, "mod-install").start();
+        pollMods();
+    }
+
+    private void pollMods() {
+        root.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (!page.equals("mods") && !page.equals("mod")) return;
+                if (status != null) status.setText(ModDownloader.status);
+                if (ModDownloader.busy) root.postDelayed(this, 500);
+                else if (page.equals("mod") && modShown != null) { String st = ModDownloader.status; showMod(modShown); status.setText(st); }
+            }
+        }, 500);
     }
 
     // ------------------------------------------------------------------ save states
@@ -500,7 +589,8 @@ public class LauncherActivity extends Activity {
         }
         if (code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (!down) return true;
-            if (!page.equals("main")) showMain();
+            if (page.equals("mod")) showMods();
+            else if (!page.equals("main")) showMain();
             else if (code == KeyEvent.KEYCODE_BACK) moveTaskToBack(true);
             return true;
         }
