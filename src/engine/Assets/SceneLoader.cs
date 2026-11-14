@@ -107,12 +107,13 @@ public sealed class SceneBuilder : IPPtrResolver {
         foreach (var (cid, cp) in comps) {
             var c = MakeComponent(cid, cp, go);
             if (c != null) {
+                c.Name = go.Name;   // Unity: a component's name is its GameObject's
                 if (c is NTransform) go.Components.Insert(0, c); else go.Components.Add(c);
             }
         }
         if (go.Components.Count == 0 || go.Components[0] is not NTransform) {
             Log.Warn($"GameObject '{go.Name}' has no Transform");
-            var t = Registry.Add(new NTransform { GameObject = go, ClassId = 4 }, (UObject)RuntimeHelpers.GetUninitializedObject(typeof(Transform)));
+            var t = Registry.Add(new NTransform { GameObject = go, ClassId = 4, Name = go.Name }, (UObject)RuntimeHelpers.GetUninitializedObject(typeof(Transform)));
             go.Components.Insert(0, t);
         }
     }
@@ -187,7 +188,8 @@ public sealed class SceneBuilder : IPPtrResolver {
         r.PPtr();
         mb.Enabled = r.U8() != 0; r.Align4();
         r.PPtr();
-        mb.Name = r.String();
+        string serializedName = r.String();
+        mb.Name = mb.GameObject?.Name ?? serializedName;
         Scripts.RunConstructor(mb.Managed!);
         Scripts.ReadFields(mb.Managed!, r, file, this, tree);
         if (!asset) Behaviours.Add(mb);

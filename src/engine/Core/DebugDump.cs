@@ -59,7 +59,92 @@ public static class DebugDump {
         Try("GetUserControl", () => PersistenSingleton<EventEngine>.Instance.GetUserControl());
     }
 
+    static bool unitsProbed;
+    static readonly bool probeBattle = Environment.GetEnvironmentVariable("FF9_PROBE_BTL") != null;
+
+    static string GoName(object? o) => o is UnityEngine.Object u && Registry.Get(u) is { } n ? $"'{n.Name}'#{n.Id}" : (o == null ? "null" : "destroyed");
+
+    /// FF9_PROBE_BTL: battle menu state every 30 frames (which button the confirm key goes to).
+    static void ProbeBattle() {
+        string stage = "find";
+        try {
+            BattleHUD? hud = null;
+            foreach (var b in Player.Behaviours.ToList()) if (b.Managed is BattleHUD h) { hud = h; break; }
+            if (hud == null) return;
+            stage = "units";
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+            object? Get(object o, string f) => o.GetType().GetField(f, F)?.GetValue(o) ?? o.GetType().GetProperty(f, F)?.GetValue(o);
+            if (!unitsProbed) {
+                object? battle = typeof(FF9StateSystem).GetProperty("Battle")?.GetValue(null);
+                object? ff9b = battle == null ? null : Get(battle, "FF9Battle");
+                object? d = ff9b == null ? null : Get(Get(ff9b, "btl_list")!, "next");
+                for (; d != null; d = Get(d, "next")) {
+                    var go = Get(d, "gameObject") as UnityEngine.GameObject;
+                    if (go == null) { Console.WriteLine("probe unit go=null"); continue; }
+                    string bone = "bone" + Convert.ToInt32(Get(d, "tar_bone")).ToString("D3");
+                    int n = 0;
+                    try { foreach (var c in (System.Collections.IEnumerable)go.transform) n++; } catch (Exception e) { Console.WriteLine("probe unit enum THROWS " + e); }
+                    UnityEngine.Transform? found = null;
+                    try { found = go.transform.GetChildByName(bone); } catch (Exception e) { Console.WriteLine("probe unit find THROWS " + e); }
+                    unitsProbed = true;
+                    Console.WriteLine($"probe unit go={GoName(go)} children={n} childCount={go.transform.childCount} {bone} found={GoName(found)}");
+                    var anim = go.GetComponent<UnityEngine.Animation>();
+                    string? cur = Get(d, "currentAnimationName") as string;
+                    try {
+                        var st = anim == null || cur == null ? null : anim[cur];
+                        int ns = 0, nnull = 0;
+                        if (anim != null) foreach (var s0 in (System.Collections.IEnumerable)anim) { ns++; if (s0 == null) nnull++; }
+                        Console.WriteLine($"probe unit anim={(anim == null ? "null" : "ok")} cur='{cur}' state={(st == null ? "null" : st.name + " t=" + st.time + " len=" + st.length)} states={ns} nullStates={nnull}");
+                    } catch (Exception e) { Console.WriteLine("probe unit anim THROWS " + e); }
+                }
+            }
+            if (hud.CurrentPlayerIndex < 0 && string.IsNullOrEmpty(ButtonGroupState.ActiveGroup)) return;
+            stage = "fields";
+            var tp = Get(hud, "_targetPanel");
+            string en = "?";
+            if (tp != null && Get(tp, "Enemies") is System.Collections.IEnumerable enemies) {
+                var parts = new List<string>();
+                foreach (var e in enemies) parts.Add(e == null ? "null" : GoName(Get(e, "GameObject")));
+                en = string.Join(",", parts);
+            }
+            var ml = Get(hud, "_matchBattleIdEnemyList") is System.Collections.ICollection mc ? mc.Count : -1;
+            stage = "group";
+            string group = ButtonGroupState.ActiveGroup;
+            stage = "active";
+            string active = GoName(ButtonGroupState.ActiveButton), selected = GoName(UICamera.selectedObject);
+            stage = "print";
+            Console.WriteLine($"probe btl f{Clock.Frame} group='{group}' active={active} selected={selected} cursor={Get(hud, "_cursorType")} player={hud.CurrentPlayerIndex} matchEnemies={ml} enemies=[{en}]");
+        } catch (Exception e) { Console.WriteLine($"probe btl failed at {stage}: " + e); }
+    }
+
+    static readonly int nameTestAt = int.TryParse(Environment.GetEnvironmentVariable("FF9_NAMETEST"), out var nt) ? nt : -1;
+
+    /// FF9_NAMETEST=frame: reads every live object's name through UnityEngine.Object.name and checks it.
+    static void NameTest() {
+        int n = 0, bad = 0;
+        foreach (var o in Registry.All.ToList()) {
+            if (o?.Managed is not UnityEngine.Object u) continue;
+            n++;
+            string s = u.name;
+            bool ok = s != null && s.Length < 4096;
+            if (ok) foreach (char ch in s!) if (ch < ' ' && ch != '\t') { ok = false; break; }
+            if (!ok && bad++ < 10) Console.WriteLine($"nametest BAD {o.GetType().Name}#{o.Id} len={s?.Length}");
+        }
+        Console.WriteLine($"nametest: {n} objects, {bad} bad; GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}");
+        GC.Collect();
+        bad = 0;
+        foreach (var o in Registry.All.ToList()) {
+            if (o?.Managed is not UnityEngine.Object u) continue;
+            string s = u.name;
+            if ((s == null || s.Length > 4096) && bad++ < 10) Console.WriteLine($"nametest after GC BAD {o.GetType().Name}#{o.Id} engine='{o.Name}' got={(s == null ? "null" : "len " + s.Length)} same={ReferenceEquals(s, o.Name)}");
+            else if (bad < 3 && s != null) Console.WriteLine($"nametest after GC ok? '{s}' engine='{o.Name}'");
+        }
+        Console.WriteLine($"nametest after GC: {bad} bad");
+    }
+
     public static void Tick() {
+        if (Clock.Frame == nameTestAt) NameTest();
+        if (probeBattle && Clock.Frame % 5 == 0) ProbeBattle();
         if (probe && (Clock.Frame % 500 == 250 || Clock.Frame == probeAt)) Probe();
         if (!frames.Contains(Clock.Frame)) return;
         Console.WriteLine($"==== frame {Clock.Frame} t={Clock.Now:F2}");

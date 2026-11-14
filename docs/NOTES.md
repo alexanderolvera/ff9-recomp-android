@@ -100,3 +100,9 @@
 - App: Mono on Android renames DllImport "__Internal" to "libmonodroid.so" (map it to the host).
 - App input: a press stays visible to the game for at least 80 ms (taps shorter than a frame,
   several pad readers per frame).
+- A component's name is its GameObject's (`transform.name`). Memoria finds bones with
+  `GetChildByName` (battle targeting, smooth animation); components now copy the GameObject's
+  name when created, cloned or renamed. Returning `g.Name` from the `Object::get_name` icall
+  instead corrupted strings after a GC (not understood; avoid adding logic to that icall).
+- `-memoria-battle 1` is too hard for a level-1 Zidane (enemies hit for 600-800); use
+  `-memoria-seed 1` to get one turn. 302 is a scripted battle (no party input).

@@ -67,7 +67,7 @@ public static class Cloner {
                 c = RecordCopiers.TryGetValue(sc.GetType(), out var cp) ? cp(sc) : (NComponent)CloneRecord(sc);
             }
             c.GameObject = g;
-            c.Name = sc.Name;
+            c.Name = g.Name;
             c.ClassId = sc.ClassId;
             c.Enabled = sc.Enabled;
             c.Raw = sc.Raw;

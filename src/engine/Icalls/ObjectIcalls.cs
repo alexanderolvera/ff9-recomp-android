@@ -18,7 +18,15 @@ static class ObjectIcalls {
     static string GetName(UObject self) => Registry.Of<NObject>(self).Name;
 
     [Icall("UnityEngine.Object::set_name")]
-    static void SetName(UObject self, string v) => Registry.Of<NObject>(self).Name = v ?? "";
+    static void SetName(UObject self, string v) {
+        // Unity: a component's name is its GameObject's; keep the copies in step
+        var o = Registry.Of<NObject>(self);
+        var g = o as NGameObject ?? (o as NComponent)?.GameObject;
+        o.Name = v ?? "";
+        if (g == null) return;
+        g.Name = o.Name;
+        foreach (var c in g.Components) c.Name = o.Name;
+    }
 
     [Icall("UnityEngine.Object::get_hideFlags")]
     static HideFlags GetHideFlags(UObject self) => Registry.Of<NObject>(self).HideFlags;
@@ -99,7 +107,7 @@ public static class GameObjectIcalls {
     [Icall("UnityEngine.GameObject::Internal_CreateGameObject")]
     static void Create(GameObject mono, string name) {
         var go = Registry.Add(new NGameObject { Name = name ?? "New Game Object", Scene = Player.ActiveScene, ClassId = 1 }, mono);
-        var t = Registry.Add(new NTransform { GameObject = go, ClassId = 4 }, (UObject)RuntimeHelpers.GetUninitializedObject(typeof(Transform)));
+        var t = Registry.Add(new NTransform { GameObject = go, ClassId = 4, Name = go.Name }, (UObject)RuntimeHelpers.GetUninitializedObject(typeof(Transform)));
         go.Components.Add(t);
     }
 
@@ -235,6 +243,7 @@ public static class GameObjectIcalls {
         if (cid == ClassIds.Transform) return g.Transform.Managed;
         var c = Components.New(cid);
         c.GameObject = g;
+        c.Name = g.Name;
         c.ClassId = cid;
         c.IsAsset = g.IsAsset;
         var cm = (UObject)RuntimeHelpers.GetUninitializedObject(type);
