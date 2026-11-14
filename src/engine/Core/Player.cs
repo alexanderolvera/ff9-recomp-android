@@ -83,7 +83,19 @@ public static class Player {
         SceneNames = Assets.AssetDB.SceneNames;
         LoadLevel(0, false);
         int maxFrames = int.TryParse(Environment.GetEnvironmentVariable("FF9_FRAMES"), out var mf) ? mf : int.MaxValue;
-        while (!Quit && Clock.Frame < maxFrames) Frame();
+        // FF9_FPS=60: pace frames like a display's vsync (the headless pbuffer doesn't wait)
+        int fps = int.TryParse(Environment.GetEnvironmentVariable("FF9_FPS"), out var fv) ? fv : 0;
+        var pace = Stopwatch.StartNew();
+        long next = 0;
+        while (!Quit && Clock.Frame < maxFrames) {
+            Frame();
+            if (fps > 0) {
+                next += Stopwatch.Frequency / fps;
+                long wait = next - pace.ElapsedTicks;
+                if (wait > 0) System.Threading.Thread.Sleep((int)(wait * 1000 / Stopwatch.Frequency));
+                else if (wait < -Stopwatch.Frequency / 4) next = pace.ElapsedTicks;
+            }
+        }
         foreach (var b in Behaviours.ToArray()) ScriptMethods.Call(b, b.Methods.OnApplicationQuit);
         Log.Info($"player stopped after {Clock.Frame} frames");
         return 0;

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 
 namespace FF9Engine;
@@ -15,8 +16,20 @@ public static class Log {
         if (once.Add(key)) Console.WriteLine("TODO " + (s ?? key));
     }
 
+    static readonly System.Collections.Generic.Dictionary<string, int> repeats = new();
+
     public static void Exception(Exception e, string where) {
-        Console.WriteLine($"EXCEPTION in {where}: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+        // the same exception from the same place: the first 3, then one line per 1000
+        var top = new System.Diagnostics.StackTrace(e, false).GetFrames().FirstOrDefault();
+        string at = top == null ? "" : $"{top.GetMethod()?.DeclaringType?.Name}.{top.GetMethod()?.Name} IL_{top.GetILOffset():x4}";
+        string key = where + "|" + e.GetType().Name + "|" + at;
+        int n = repeats.GetValueOrDefault(key) + 1;
+        repeats[key] = n;
+        if (n > 3) {
+            if (n % 1000 == 0) Console.WriteLine($"EXCEPTION in {where}: {e.GetType().Name} at {at} (x{n})");
+            return;
+        }
+        Console.WriteLine($"EXCEPTION in {where}: {e.GetType().Name}: {e.Message} [at {at}]\n{e.StackTrace}");
         for (var inner = e.InnerException; inner != null; inner = inner.InnerException)
             Console.WriteLine($"  inner {inner.GetType().Name}: {inner.Message}\n{inner.StackTrace}");
         if (Environment.GetEnvironmentVariable("FF9_EXC_OFFSETS") != null)

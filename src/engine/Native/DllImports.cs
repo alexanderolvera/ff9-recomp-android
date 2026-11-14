@@ -12,6 +12,7 @@ public static class DllImports {
         "user32", "kernel32", "steamwrapper", "XInputInterface", "JoyShockLibrary", "__Internal", "SdLib",
         "theorawrapper", "FF9SpecialEffectPlugin", "soloud", "SaXAudio", "steam_api", "steam_api64",
         "libSystem.Security.Cryptography.Native.Android",
+        "libmonodroid.so", "libmonodroid",     // Mono on Android renames "__Internal" to this
     };
 
     public static void Install() {

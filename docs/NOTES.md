@@ -93,3 +93,10 @@
 - Matrix4x4 is serialized by row (e00 e01 ...); UnityEngine.Matrix4x4's fields go by column.
 - Screenshots must force alpha 255 (cameras clear with alpha 0.02).
 - Renderer.material / MeshFilter.mesh copy once per renderer, not per call.
+- Known: during the opening FMV (field 70, which has no walk mesh by design) the player's
+  FieldMapActorController throws in MovePC every frame (walkMesh is null); the game carries on
+  to the cargo hold after the movie. Not yet known whether Unity avoids it. Logged once (repeats
+  of the same exception are collapsed: first 3, then one line per 1000).
+- App: Mono on Android renames DllImport "__Internal" to "libmonodroid.so" (map it to the host).
+- App input: a press stays visible to the game for at least 80 ms (taps shorter than a frame,
+  several pad readers per frame).

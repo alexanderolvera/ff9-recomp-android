@@ -1,5 +1,6 @@
 // Debug: FF9_DUMP_FRAME=n prints the active scene hierarchy (components, enabled/started) at frame n.
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
@@ -10,6 +11,7 @@ public static class DebugDump {
     static readonly string? goFilter = Environment.GetEnvironmentVariable("FF9_INSPECT_GO")?.Replace('_', ' ');
 
     static readonly bool probe = Environment.GetEnvironmentVariable("FF9_PROBE") != null;
+    static readonly int probeAt = int.TryParse(Environment.GetEnvironmentVariable("FF9_PROBE"), out var pa) ? pa : -1;
 
     static void Try(string what, Func<object?> f) {
         try { Console.WriteLine($"probe {what} = {f() ?? "null"}"); }
@@ -18,6 +20,32 @@ public static class DebugDump {
 
     /// FF9_PROBE: evaluates the calls FieldMapActorController.MovePC makes, one by one.
     static void Probe() {
+        try {
+            var sys = typeof(HonoBehaviorSystem);
+            var list = sys.GetField("_behaviorList", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+            object? inst = list!.IsStatic ? null : HonoBehaviorSystem.Instance;
+            var l = (System.Collections.IList)list.GetValue(inst)!;
+            var names = new List<string>();
+            foreach (var o in l) {
+                string n = o?.GetType().Name ?? "null";
+                if (o is UnityEngine.Object uo && (n == "FieldMap" || n == "FieldSPSSystem" || n == "FieldMapActorController" || n == "HonoluluFieldMain"))
+                    n += $"#{Registry.Get(uo)?.Id}({(Registry.Get(uo) as NComponent)?.GameObject.Name}{((Registry.Get(uo) as NMonoBehaviour)?.Awoken == true ? ",awoken" : "")})";
+                if (n.StartsWith("HonoEventObject")) continue;
+                names.Add(n);
+            }
+            Console.WriteLine($"probe behaviorList ({l.Count}): " + string.Join(", ", names));
+            var mc = typeof(EventInput).GetField("isMovementControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Console.WriteLine($"probe isMovementControl = {mc?.GetValue(null)}");
+            var pm = (uint[]?)typeof(EventInput).GetField("PSXCntlPadMask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null);
+            var mm = typeof(EventInput).GetField("MovementMask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+            Console.WriteLine($"probe padmask = {(pm == null ? "null" : string.Join(",", pm.Select(x => x.ToString("x"))))} movementMask = {mm:x} fldMapNo = {FF9StateSystem.Common.FF9.fldMapNo} userControl = {PersistenSingleton<EventEngine>.Instance.GetUserControl()}");
+            foreach (var b in Player.Behaviours.ToList())
+                if (b.Managed is FieldMapActorController fc) {
+                    var oa = fc.originalActor;
+                    var st = typeof(EventEngine).GetField("stateRunning", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+                    Console.WriteLine($"probe controller on '{b.GameObject.Name}' isPlayer={fc.isPlayer} actorState={oa?.state} stateRunning={st} fieldMap={(fc.fieldMap == null ? "null" : "set")}");
+                }
+        } catch (Exception e) { Console.WriteLine("probe list failed: " + e.Message); }
         Try("Field", () => FF9StateSystem.Field);
         Try("Field.isDebug", () => FF9StateSystem.Field.isDebug);
         Try("IsMovementControl", () => EventInput.IsMovementControl);
@@ -32,7 +60,7 @@ public static class DebugDump {
     }
 
     public static void Tick() {
-        if (probe && Clock.Frame % 500 == 250) Probe();
+        if (probe && (Clock.Frame % 500 == 250 || Clock.Frame == probeAt)) Probe();
         if (!frames.Contains(Clock.Frame)) return;
         Console.WriteLine($"==== frame {Clock.Frame} t={Clock.Now:F2}");
         if (Environment.GetEnvironmentVariable("FF9_DUMP_RT") is { } rtName)

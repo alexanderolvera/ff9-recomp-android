@@ -58,10 +58,16 @@ JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRun(JNIEnv *env, jc
     /* the game quit: end the game process (":game") without running static destructors
        while the runtime's and the audio threads are still alive */
     fflush(stdout); fflush(stderr);
+    /* let the log thread forward the last lines: close every write end, wait for EOF */
+    close(1); close(2); close(log_pipe[1]);
+    pthread_join(t, NULL);
+    if (lf) fclose(lf);
     _exit(r);
 }
 
 JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativePad(JNIEnv *env, jclass cls, jint buttons, jint lt, jint rt, jint lx, jint ly, jint rx, jint ry) {
+    static int last = -1;
+    if (buttons != last) { __android_log_print(ANDROID_LOG_INFO, "FF9", "pad buttons %04x", buttons); last = buttons; }
     ff9_pad_set((uint16_t)buttons, (uint8_t)lt, (uint8_t)rt, (int16_t)lx, (int16_t)ly, (int16_t)rx, (int16_t)ry);
 }
 #endif

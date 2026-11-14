@@ -16,10 +16,21 @@ typedef struct {
 
 XInputRawState ff9_pad;
 int ff9_pad_connected = 1;
+/* A press stays visible for at least MIN_HOLD_NS, so a tap shorter than a frame (or one the
+   game's several pad readers would see only once) still registers. */
+#include <time.h>
+#define MIN_HOLD_NS 80000000LL
+static int64_t pressed_at[16];
+
+static int64_t now_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec; }
 
 EXPORT uint32_t XInputGamePadGetState(uint32_t player, XInputRawState *s) {
     if (player != 0 || !ff9_pad_connected) return 1167;   /* ERROR_DEVICE_NOT_CONNECTED */
     *s = ff9_pad;
+    int64_t t = now_ns();
+    for (int i = 0; i < 16; i++)
+        if (!(s->buttons & (1u << i)) && pressed_at[i] && t - __atomic_load_n(&pressed_at[i], __ATOMIC_ACQUIRE) < MIN_HOLD_NS)
+            s->buttons |= (uint16_t)(1u << i);
     return 0;
 }
 
@@ -28,6 +39,8 @@ EXPORT void XInputGamePadSetState(uint32_t player, float left, float right) {}
 /* called by the platform layer */
 void ff9_pad_set(uint16_t buttons, uint8_t lt, uint8_t rt, int16_t lx, int16_t ly, int16_t rx, int16_t ry) {
     ff9_pad.packet++;
+    uint16_t down = buttons & ~ff9_pad.buttons;
+    if (down) { int64_t t = now_ns(); for (int i = 0; i < 16; i++) if (down & (1u << i)) __atomic_store_n(&pressed_at[i], t, __ATOMIC_RELEASE); }
     ff9_pad.buttons = buttons;
     ff9_pad.left_trigger = lt;
     ff9_pad.right_trigger = rt;
