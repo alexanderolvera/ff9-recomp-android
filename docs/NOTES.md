@@ -63,3 +63,33 @@
   bound to numbered thunks (tools/gen_thunks.py), so nothing game-derived is compiled in.
 - Moguri Mod (~5 GB) is installed with Memoria's Mod Manager on the PC before importing; Memoria
   loads it from the game folder as on PC.
+
+## Battle effects plugin (FF9SpecialEffectPlugin.dll)
+- Memoria's SFXRework still calls the plugin every battle frame (`SFX_UpdateCamera`: the PSX
+  battle camera, 13 floats) and for camera sequences, so battles need it.
+- src/host/sfx_plugin.c loads the player's DLL from `x64/FF9_Data/Plugins` at run time:
+  sections into an mmap, DIR64 relocations, each IAT slot pointed at a stub address that the
+  interpreter hands to `host_call` (msvcr120/msvcp120/kernel32 calls implemented there), then
+  DllMain. The game's `SFX.Callback` is a native function pointer and is called directly.
+- src/host/x64emu.c: an x86-64 interpreter (guest addresses = host addresses; Windows x64
+  calling convention; flags computed eagerly; SSE scalar/packed). Unknown opcodes stop the
+  call with a log line (`x64emu: unknown ... at`), never crash.
+- Nothing derived from the DLL is generated, stored or shipped.
+
+## More debug switches (2026-11-14)
+- `FF9_ARGS="-memoria-battle+1"`: extra game arguments (`+` separates; Memoria's launch options:
+  `-memoria-battle N`, `-memoria-party a,b`, `-memoria-seed N`, `-memoria-autoload`).
+- `FF9_MEMSTAT=n` (+`FF9_MEMSTAT_MAPS`, `FF9_MEMSTAT_TYPES`): memory, mappings, objects by type.
+- `GLTRACE=1` build + `FF9_GL_TRACE`: GL call counts per report.
+- `FF9_EXC_OFFSETS`: IL offsets in exception stacks. `FF9_MONO_OPTS="--optimize=-inline"`.
+- `FF9_DUMP_RT=name` with `FF9_DUMP_FRAME`: render texture contents. `FF9_TRACE_DRAWTEX`.
+- `FF9_SKIP_CAMERA=Name@depth`, `FF9_SKIP_SHADER`, `FF9_NO_RENDER_FROM`, `FF9_TRACE_SCENE`.
+- `FF9_SFX_TRACE`, `FF9_SFX_STUB`, `FF9_SFX_PLUGIN=path`.
+
+## Gotchas found
+- Prefab assets must not run scripts or render (the MBG prefab's camera wiped the field).
+- Shader values the shader doesn't declare in Properties come from the globals even when the
+  material has a saved copy (field fades, `_MatrixRT`).
+- Matrix4x4 is serialized by row (e00 e01 ...); UnityEngine.Matrix4x4's fields go by column.
+- Screenshots must force alpha 255 (cameras clear with alpha 0.02).
+- Renderer.material / MeshFilter.mesh copy once per renderer, not per call.

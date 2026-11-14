@@ -85,9 +85,10 @@ final class GameInstall {
                 String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
                 long size = c.getLong(3);
                 String r = rel.isEmpty() ? name : rel + "/" + name;
-                // Windows-only parts of the install are not needed on Android
-                if (r.equalsIgnoreCase("x86") || r.toLowerCase().endsWith(".exe") || r.equalsIgnoreCase("x64/FF9_Data/Mono")
-                        || r.equalsIgnoreCase("x64/FF9_Data/Plugins")) continue;
+                // Windows-only parts of the install are not needed on Android, except the battle
+                // effects plugin, which the app runs in its x86-64 interpreter
+                if (r.equalsIgnoreCase("x86") || r.toLowerCase().endsWith(".exe") || r.equalsIgnoreCase("x64/FF9_Data/Mono")) continue;
+                if (rel.equalsIgnoreCase("x64/FF9_Data/Plugins") && !name.equalsIgnoreCase("FF9SpecialEffectPlugin.dll")) continue;
                 File out = new File(dst, name);
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     out.mkdirs();
