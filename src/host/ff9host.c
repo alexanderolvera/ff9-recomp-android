@@ -204,43 +204,41 @@ static int cmd_run(const char *type, const char *method) {
     return 0;
 }
 
-/* ---- the first real engine calls: Application ---- */
-static char g_root[1024];
+/* ---- FF9Engine.dll: the engine's internal calls are managed methods ---- */
+static void add_icall(const char *name, const void *fn) { ICALL(name, fn); }
 
-static MonoString *str(const char *s) { return mono_string_new(g_domain, s); }
-static MonoString *app_dataPath(void) {
-    char p[1100]; snprintf(p, sizeof p, "%s/x64/FF9_Data", g_root); return str(p);
-}
-static MonoString *app_streamingAssetsPath(void) {
-    char p[1100]; snprintf(p, sizeof p, "%s/x64/FF9_Data/StreamingAssets", g_root); return str(p);
-}
-static MonoString *app_persistentDataPath(void) {
-    char p[1100]; snprintf(p, sizeof p, "%s/persistent", g_root); return str(p);
-}
-static MonoString *app_temporaryCachePath(void) {
-    char p[1100]; snprintf(p, sizeof p, "%s/cache", g_root); return str(p);
-}
-static int app_platform(void) { return 2; }   /* RuntimePlatform.WindowsPlayer: Memoria's PC paths */
-static MonoString *app_unityVersion(void) { return str("5.2.3p2"); }
-static int app_isPlaying(void) { return 1; }
-
-static void mb_ctor(MonoObject *self) { (void)self; }   /* native object made by the scene loader */
-static void debug_log(int level, MonoString *msg, MonoObject *ctx) {
-    char *u = msg ? mono_string_to_utf8(msg) : NULL;
-    printf("[Unity log %d] %s\n", level, u ? u : "");
-    mono_free(u);
+static int load_engine(void) {
+    MonoAssemblyName *an = mono_assembly_name_new("FF9Engine");
+    MonoImageOpenStatus st;
+    MonoAssembly *a = mono_assembly_load(an, NULL, &st);
+    if (!a) { printf("FF9Engine.dll: load failed (%d)\n", st); return -1; }
+    MonoClass *boot = mono_class_from_name(mono_assembly_get_image(a), "FF9Engine", "Boot");
+    MonoMethod *init = boot ? mono_class_get_method_from_name(boot, "Init", 1) : NULL;
+    if (!init) { printf("FF9Engine.Boot.Init missing\n"); return -1; }
+    void *fn = (void *)add_icall;
+    void *args[1] = {&fn};
+    MonoObject *exc = NULL;
+    MonoObject *r = mono_runtime_invoke(init, NULL, args, &exc);
+    if (exc) { printf("FF9Engine.Boot.Init: %s\n", exc_text(exc)); return -1; }
+    return *(int *)mono_object_unbox(r);
 }
 
-static void register_engine(void) {
-    ICALL("UnityEngine.MonoBehaviour::.ctor", mb_ctor);
-    ICALL("UnityEngine.Debug::Internal_Log", debug_log);
-    ICALL("UnityEngine.Application::get_dataPath", app_dataPath);
-    ICALL("UnityEngine.Application::get_streamingAssetsPath", app_streamingAssetsPath);
-    ICALL("UnityEngine.Application::get_persistentDataPath", app_persistentDataPath);
-    ICALL("UnityEngine.Application::get_temporaryCachePath", app_temporaryCachePath);
-    ICALL("UnityEngine.Application::get_platform", app_platform);
-    ICALL("UnityEngine.Application::get_unityVersion", app_unityVersion);
-    ICALL("UnityEngine.Application::get_isPlaying", app_isPlaying);
+/* the game itself: FF9Engine.Entry.Play() runs scene 0 and the player loop */
+int mono_runtime_set_main_args(int argc, char *argv[]);
+
+static int cmd_play(void) {
+    /* the PC launcher starts the game with these (AppArgumentsCheck quits without them) */
+    static char *args[] = {"FF9.exe", "-runbylauncher", NULL};
+    mono_runtime_set_main_args(2, args);
+    MonoAssemblyName *an = mono_assembly_name_new("FF9Engine");
+    MonoImageOpenStatus st;
+    MonoAssembly *a = mono_assembly_load(an, NULL, &st);
+    MonoClass *c = mono_class_from_name(mono_assembly_get_image(a), "FF9Engine", "Entry");
+    MonoMethod *m = mono_class_get_method_from_name(c, "Play", 0);
+    MonoObject *exc = NULL;
+    MonoObject *r = mono_runtime_invoke(m, NULL, NULL, &exc);
+    if (exc) { printf("Play: unhandled %s\n", exc_text(exc)); return 1; }
+    return *(int *)mono_object_unbox(r);
 }
 
 int main(int argc, char **argv) {
@@ -249,12 +247,15 @@ int main(int argc, char **argv) {
     const char *dir = argv[1];
     char bcl[1024], managed[1024];
     snprintf(bcl, sizeof bcl, "%s/bcl", dir);
+    char engine_dir[1024];
     snprintf(managed, sizeof managed, "%s/managed", dir);
+    snprintf(engine_dir, sizeof engine_dir, "%s/engine", dir);
     /* the game's own mscorlib/System/System.Core are Unity's .NET 3.5 profile: .NET 8's facades replace them */
     static const char *const skip_game[] = {"mscorlib.dll", "System.dll", "System.Core.dll",
                                             "System.Runtime.Serialization.dll", NULL};
     char *tpa = join_dir(bcl, ".dll", NULL, NULL);
     tpa = join_dir(managed, ".dll", skip_game, tpa);
+    tpa = join_dir(engine_dir, ".dll", NULL, tpa);
     const char *keys[] = {"TRUSTED_PLATFORM_ASSEMBLIES", "NATIVE_DLL_SEARCH_DIRECTORIES",
                           "System.Globalization.Invariant", "APP_CONTEXT_BASE_DIRECTORY",
                           "System.Resources.UseSystemResourceKeys"};
@@ -270,10 +271,16 @@ int main(int argc, char **argv) {
     printf("mono up in %.2f s, %d UnityEngine internal calls registered as stubs\n", now() - t0, ue_icall_count);
 
     /* the game runs from its root folder (Memoria reads Memoria.ini, StreamingAssets/... relative) */
-    snprintf(g_root, sizeof g_root, "%s/game", dir);
-    if (chdir(g_root)) { printf("no game folder %s\n", g_root); return 1; }
-    register_engine();
+    char root[1024];
+    snprintf(root, sizeof root, "%s/game", dir);
+    if (chdir(root)) { printf("no game folder %s\n", root); return 1; }
+    void *stackdata[4];
+    mono_threads_enter_gc_unsafe_region(stackdata);
+    int engine = load_engine();
+    if (engine < 0) return 1;
+    printf("FF9Engine: %d internal calls implemented\n", engine);
 
+    if (!strcmp(argv[2], "play")) return cmd_play();
     if (!strcmp(argv[2], "jit")) { g_stop_on_icall = 0; return cmd_jit(dir); }
     if (!strcmp(argv[2], "run") && argc >= 5) return cmd_run(argv[3], argv[4]);
     fprintf(stderr, "unknown command\n");
