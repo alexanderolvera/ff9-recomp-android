@@ -16,7 +16,10 @@ public static class Pad {
 
     public static Raw Now, Prev;
 
+    [DllImport("__Internal")] static extern void ff9_pad_frame(int frame);
+
     public static void Poll() {
+        ff9_pad_frame(Core.Clock.Frame);
         Prev = Now;
         var s = new Raw();
         if (GetState(0, ref s) == 0) Now = s; else Now = default;

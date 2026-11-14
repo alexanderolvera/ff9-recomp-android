@@ -175,7 +175,8 @@ public static class RendererComponents {
     /// probe anchor, sorting layer id, sorting order.
     static void ReadRenderer(NRenderer c, BinReader r, SceneBuilder b) {
         r.PPtr();
-        c.Enabled = r.Bool(); r.U8(); r.U8(); r.Align4();
+        c.Enabled = r.Bool(); r.Align4();          // m_Enabled is followed by alignment
+        r.U8(); r.Bool(); r.Align4();              // castShadows, receiveShadows
         r.U16(); r.U16();
         r.V4(); r.V4();
         int nm = r.I32();

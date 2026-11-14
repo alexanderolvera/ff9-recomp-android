@@ -188,8 +188,21 @@ public sealed class SceneBuilder : IPPtrResolver {
         if (!asset) Behaviours.Add(mb);
     }
 
+    static readonly string? dumpTree = Environment.GetEnvironmentVariable("FF9_DUMP_TREE");
+    static readonly HashSet<int> dumped = new();
+
     void FillComponent(NComponent c, BinReader r) {
         long start = r.Pos;
+        if (dumpTree == c.ClassId.ToString() && dumped.Add(c.ClassId) && file.HasTypeTrees) {
+            foreach (var o in file.ObjectList)
+                if (o.ClassId == c.ClassId && file.TreeOf(o) is { } tree) {
+                    foreach (var n in tree.Root.Children) {
+                        Log.Info($"  {ClassIds.Name(c.ClassId)} tree: {n.Type} {n.Name} size={n.ByteSize}{(n.Align ? " align" : "")}");
+                        foreach (var g in n.Children) Log.Info($"      {g.Type} {g.Name} size={g.ByteSize}{(g.Align ? " align" : "")}");
+                    }
+                    break;
+                }
+        }
         if (ComponentReaders.TryGetValue(c.ClassId, out var reader)) {
             try { reader(c, r, this); } catch (Exception e) { Log.Exception(e, $"reading {ClassIds.Name(c.ClassId)}"); }
             return;

@@ -23,8 +23,10 @@ public class NTexture : NObject {
     public uint GlTex;
     public bool Readable = true;
     public bool Linear;
+    public bool External;              // a GL texture owned by a native plugin (movies)
 
     public virtual uint Bind() {
+        if (External) return GlTex;
         if (GlTex == 0 || Dirty) Upload();
         return GlTex;
     }
@@ -381,11 +383,21 @@ static class TextureIcalls {
     [Icall("UnityEngine.Texture::Internal_GetWidth")] static int W(Texture t) => T(t).Width;
     [Icall("UnityEngine.Texture::Internal_GetHeight")] static int H(Texture t) => T(t).Height;
     [Icall("UnityEngine.Texture::get_filterMode")] static FilterMode GF(Texture t) => T(t).Filter;
-    [Icall("UnityEngine.Texture::set_filterMode")] static void SF(Texture t, FilterMode v) { var x = T(t); x.Filter = v; x.Dirty |= x.GlTex != 0; if (x is NRenderTexture rt && rt.Created) { GL.glBindTexture(GL.TEXTURE_2D, rt.GlTex); rt.ApplySampler(); } }
+    [Icall("UnityEngine.Texture::set_filterMode")]
+    static void SF(Texture t, FilterMode v) {
+        var x = T(t); x.Filter = v;
+        if (x is NRenderTexture { Created: true } || x.External) { if (Device.Ready && x.GlTex != 0) { GL.glBindTexture(GL.TEXTURE_2D, x.GlTex); x.ApplySampler(); } }
+        else x.Dirty |= x.GlTex != 0;
+    }
     [Icall("UnityEngine.Texture::get_anisoLevel")] static int GA(Texture t) => T(t).Aniso;
     [Icall("UnityEngine.Texture::set_anisoLevel")] static void SA(Texture t, int v) => T(t).Aniso = v;
     [Icall("UnityEngine.Texture::get_wrapMode")] static TextureWrapMode GW(Texture t) => T(t).Wrap;
-    [Icall("UnityEngine.Texture::set_wrapMode")] static void SW(Texture t, TextureWrapMode v) { var x = T(t); x.Wrap = v; if (x is NRenderTexture rt && rt.Created) { GL.glBindTexture(GL.TEXTURE_2D, rt.GlTex); rt.ApplySampler(); } else x.Dirty |= x.GlTex != 0; }
+    [Icall("UnityEngine.Texture::set_wrapMode")]
+    static void SW(Texture t, TextureWrapMode v) {
+        var x = T(t); x.Wrap = v;
+        if (x is NRenderTexture { Created: true } || x.External) { if (Device.Ready && x.GlTex != 0) { GL.glBindTexture(GL.TEXTURE_2D, x.GlTex); x.ApplySampler(); } }
+        else x.Dirty |= x.GlTex != 0;
+    }
     [Icall("UnityEngine.Texture::get_mipMapBias")] static float GMB(Texture t) => T(t).MipBias;
     [Icall("UnityEngine.Texture::set_mipMapBias")] static void SMB(Texture t, float v) => T(t).MipBias = v;
     [Icall("UnityEngine.Texture::INTERNAL_get_texelSize")] static void Texel(Texture t, ref Vector2 v) { var x = T(t); v = new Vector2(1f / x.Width, 1f / x.Height); }
@@ -397,10 +409,17 @@ static class TextureIcalls {
 
     [Icall("UnityEngine.Texture2D::Internal_Create")]
     static void Create(Texture2D mono, int w, int h, TextureFormat fmt, bool mipmap, bool linear, IntPtr native) {
+        if (native != IntPtr.Zero) {
+            Registry.Add(new NTexture { Width = w, Height = h, Format = fmt, GlTex = (uint)native, External = true, Dirty = false, Readable = false, Wrap = TextureWrapMode.Clamp }, mono);
+            return;
+        }
         var t = new NTexture { Width = w, Height = h, Format = fmt, MipCount = mipmap ? 2 : 1, Linear = linear, Pixels = new byte[w * h * 4] };
         for (int i = 3; i < t.Pixels.Length; i += 4) t.Pixels[i] = 255;   // Unity initialises new textures to opaque
         Registry.Add(t, mono);
     }
+
+    [Icall("UnityEngine.Texture2D::UpdateExternalTexture")]
+    static void UpdateExternal(Texture2D tex, IntPtr native) { var t = T(tex); t.GlTex = (uint)native; t.External = true; }
 
     [Icall("UnityEngine.Texture2D::get_format")] static TextureFormat Fmt(Texture2D t) => T(t).Format;
     [Icall("UnityEngine.Texture2D::get_mipmapCount")] static int Mips(Texture2D t) => T(t).MipCount;

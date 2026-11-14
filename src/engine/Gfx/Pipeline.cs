@@ -450,6 +450,7 @@ public static class Pipeline {
         });
         var ctx = new DrawCtx { V = View, P = Proj };
         bool log = DrawLogFrame == Clock.Frame;
+        if (log && cam.Depth >= 2) foreach (var kv in Globals.Vectors) Log.Info($"  global {PropIds.Name(kv.Key)} = {kv.Value}");
         if (log) Log.Info($"camera '{cam.GameObject.Name}' depth={cam.Depth} mask={cam.CullingMask:x} ortho={cam.Orthographic} size={cam.OrthoSize} clear={cam.ClearFlags} bg={cam.Background} rect={cam.PixelRect} items={items.Count}");
         foreach (var it in items) {
             if (log) {

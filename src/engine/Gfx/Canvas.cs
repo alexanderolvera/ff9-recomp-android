@@ -48,9 +48,8 @@ public static class Canvases {
             x.PlaneDistance = r.F32();
             x.PixelPerfect = r.Bool(); r.Bool(); x.OverrideSorting = r.Bool(); x.OverridePixelPerfect = r.Bool();
             r.Align4();
-            r.F32();
-            x.SortingLayerId = r.I32();
-            x.SortingOrder = r.I16();
+            if (r.Remaining >= 10) r.F32();          // sortingBucketNormalizedSize (not in every 5.x)
+            if (r.Remaining >= 6) { x.SortingLayerId = r.I32(); x.SortingOrder = r.I16(); }
         };
         SceneBuilder.ComponentReaders[222] = (c, r, b) => r.PPtr();
         Cloner.RecordCopiers[typeof(NCanvas)] = c => { var n = (NCanvas)Cloner.CloneRecord(c); All.Add(n); return n; };

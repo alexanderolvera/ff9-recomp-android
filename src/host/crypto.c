@@ -364,3 +364,4 @@ EXPORT int AndroidCryptoNative_CipherFinalEx(CipherCtx *c, uint8_t *out, int *ou
 EXPORT int AndroidCryptoNative_AeadCipherFinalEx(CipherCtx *c, uint8_t *out, int *outl, int *mismatch) { *mismatch = 0; return AndroidCryptoNative_CipherFinalEx(c, out, outl); }
 
 EXPORT int CryptoNative_GetMaxMdSize(void) { return 64; }
+EXPORT int CryptoNative_EnsureOpenSslInitialized(void) { return 0; }

@@ -195,11 +195,16 @@ public sealed unsafe class BinReader {
     public void Skip(long n) => Pos += n;
     public void Align4() => Pos = (Pos + 3) & ~3L;
 
-    public byte U8() => m.Ptr[Pos++];
-    public bool Bool() => m.Ptr[Pos++] != 0;
-    public sbyte I8() => (sbyte)m.Ptr[Pos++];
+    void Need(long n) {
+        if (Pos < 0 || Pos + n > End || Pos + n > m.Length) throw new InvalidDataException($"read of {n} bytes at {Pos} past the object end {End}");
+    }
+
+    public byte U8() { Need(1); return m.Ptr[Pos++]; }
+    public bool Bool() { Need(1); return m.Ptr[Pos++] != 0; }
+    public sbyte I8() { Need(1); return (sbyte)m.Ptr[Pos++]; }
 
     public ushort U16() {
+        Need(2);
         ushort v = *(ushort*)(m.Ptr + Pos);
         if (BigEndian) v = System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(v);
         Pos += 2; return v;
@@ -208,6 +213,7 @@ public sealed unsafe class BinReader {
     public short I16() => (short)U16();
 
     public uint U32() {
+        Need(4);
         uint v = *(uint*)(m.Ptr + Pos);
         if (BigEndian) v = System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(v);
         Pos += 4; return v;
@@ -216,16 +222,19 @@ public sealed unsafe class BinReader {
     public int I32() => (int)U32();
 
     public ulong U64() {
+        Need(8);
         ulong v = *(ulong*)(m.Ptr + Pos);
         if (BigEndian) v = System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(v);
         Pos += 8; return v;
     }
 
     public long I64() => (long)U64();
-    public float F32() { float v = *(float*)(m.Ptr + Pos); Pos += 4; return v; }
-    public double F64() { double v = *(double*)(m.Ptr + Pos); Pos += 8; return v; }
+    public float F32() { Need(4); float v = *(float*)(m.Ptr + Pos); Pos += 4; return v; }
+    public double F64() { Need(8); double v = *(double*)(m.Ptr + Pos); Pos += 8; return v; }
 
     public byte[] Bytes(int n) {
+        if (n < 0) throw new InvalidDataException($"negative length {n} at {Pos}");
+        Need(n);
         var b = new byte[n];
         new ReadOnlySpan<byte>(m.Ptr + Pos, n).CopyTo(b);
         Pos += n; return b;
@@ -250,6 +259,8 @@ public sealed unsafe class BinReader {
     /// Unity string: int32 length, UTF-8 bytes, aligned to 4.
     public string String() {
         int n = I32();
+        if (n < 0) throw new InvalidDataException($"negative string length {n} at {Pos}");
+        Need(n);
         string s = Encoding.UTF8.GetString(m.Ptr + Pos, n);
         Pos += n; Align4(); return s;
     }

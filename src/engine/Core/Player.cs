@@ -49,6 +49,7 @@ public static class Player {
     public static bool Quit;
     public static Action? Render;             // set by the renderer
     public static Action? PollInput;
+    public static Action<float>? AnimationTick;   // legacy Animation, between Update and LateUpdate
 
     sealed class LevelRequest { public int Index; public bool Additive; public AsyncOps.Op? Op; }
     static readonly Queue<LevelRequest> levelRequests = new();
@@ -58,7 +59,7 @@ public static class Player {
         Native.Compat.Install();
         PollInput = () => { Touches.WasDown = Touches.Down; Icalls.Pad.Poll(); };
         Gfx.Textures.Register(); Gfx.Shaders.Register(); Gfx.Materials.Register(); Gfx.Meshes.Register();
-        Gfx.Sprites.Register(); Gfx.RendererComponents.Register(); Gfx.Cameras.Register(); Assets.TextAssets.Register(); Physics.Colliders.Register(); Gfx.Canvases.Register(); Text.Fonts.Register();
+        Gfx.Sprites.Register(); Gfx.RendererComponents.Register(); Gfx.Cameras.Register(); Assets.TextAssets.Register(); Physics.Colliders.Register(); Gfx.Canvases.Register(); Text.Fonts.Register(); Anim.Clips.Register(); Anim.Animations.Register();
         if (Environment.GetEnvironmentVariable("FF9_NOGL") == null) {
             try { Gfx.Device.Init(); } catch (Exception e) { Log.Warn("GL init failed: " + e.Message); }
             Icalls.Display.Width = Gfx.Device.Width; Icalls.Display.Height = Gfx.Device.Height;
@@ -113,6 +114,7 @@ public static class Player {
         Coroutines.RunInvokes();
         Coroutines.Run(Coroutines.Phase.Update);
         AsyncOps.Tick();
+        AnimationTick?.Invoke(Clock.Delta);
         foreach (var b in Snapshot()) if (Runs(b) && b.Started) ScriptMethods.Call(b, b.Methods.LateUpdate);
         Render?.Invoke();
         Coroutines.Run(Coroutines.Phase.EndOfFrame);
