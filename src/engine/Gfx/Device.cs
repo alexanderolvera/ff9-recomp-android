@@ -15,6 +15,7 @@ public static unsafe class Device {
     [System.Runtime.InteropServices.DllImport("__Internal")] static extern IntPtr ff9_get_native_window();
     [System.Runtime.InteropServices.DllImport("__Internal")] static extern int ff9_window_gen();
     [System.Runtime.InteropServices.DllImport("__Internal")] static extern void ff9_window_ack(int gen);
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern void ff9_frame_shown();
     static IntPtr config;
     static int windowGen;
 
@@ -60,6 +61,7 @@ public static unsafe class Device {
         if (!Ready) return;
         if (ff9_window_gen() != windowGen) ChangeWindow();
         EGL.eglSwapBuffers(Display, Surface);
+        ff9_frame_shown();
         if (finish) GL.glFinish();
     }
 

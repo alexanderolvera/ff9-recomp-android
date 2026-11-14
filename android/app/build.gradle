@@ -46,3 +46,11 @@ android {
     packaging { jniLibs { useLegacyPackaging true } }
     androidResources { noCompress += ['zip'] }
 }
+
+dependencies {
+    // Steam achievements (SteamLink.java, from FF7Recomp): JavaSteam (MIT) signs in by QR code and
+    // sends unlocks; ZXing (Apache-2.0) draws the QR code.
+    implementation 'in.dragonbra:javasteam:1.8.0'
+    implementation 'com.google.protobuf:protobuf-java:4.31.1'
+    implementation 'com.google.zxing:core:3.5.3'
+}

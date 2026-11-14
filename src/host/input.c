@@ -34,7 +34,17 @@ EXPORT uint32_t XInputGamePadGetState(uint32_t player, XInputRawState *s) {
     return 0;
 }
 
-EXPORT void XInputGamePadSetState(uint32_t player, float left, float right) {}
+/* the game's rumble (both motors, 0..1): the APK reads it (nativeRumble) and drives a vibrator */
+volatile float ff9_rumble_left, ff9_rumble_right;
+EXPORT void XInputGamePadSetState(uint32_t player, float left, float right) {
+    if (player != 0) return;
+    ff9_rumble_left = left;
+    ff9_rumble_right = right;
+}
+
+/* frames shown (FF9Engine Gfx/Device.Present), for the app's FPS counter */
+volatile uint32_t ff9_frames_shown;
+EXPORT void ff9_frame_shown(void) { __atomic_add_fetch(&ff9_frames_shown, 1, __ATOMIC_RELAXED); }
 
 /* called by the platform layer */
 void ff9_pad_set(uint16_t buttons, uint8_t lt, uint8_t rt, int16_t lx, int16_t ly, int16_t rx, int16_t ry) {

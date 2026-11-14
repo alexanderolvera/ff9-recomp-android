@@ -30,10 +30,11 @@ final class GameInstall {
 
     GameInstall(Context ctx) {
         this.ctx = ctx;
-        File ext = ctx.getExternalFilesDir(null);
+        File ext = Storage.root(ctx);
         files = ext != null ? ext : ctx.getFilesDir();
         game = new File(files, "game");
-        runtime = new File(files, "runtime");
+        File internal = Storage.internalRoot(ctx);
+        runtime = new File(internal != null ? internal : ctx.getFilesDir(), "runtime");   // never on an SD card
     }
 
     boolean hasGame() {

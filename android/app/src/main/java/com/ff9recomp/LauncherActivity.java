@@ -145,10 +145,16 @@ public class LauncherActivity extends Activity {
         boolean ready = has && missing == null;
         TextView play = item("Play", ready ? "Start FINAL FANTASY IX." : "Import your game folder first.", this::play);
         play.setAlpha(ready ? 1f : 0.45f);
+        item("Save states", "Resume a place you kept in game with Select+R1.", this::showStates);
+        item("Achievements", "What you have unlocked in this copy.", this::showAchievements);
         item("Settings", "Frame rate, widescreen, boosters, controls, volume.", this::showSettings);
         item("Report a problem", "Make one zip with the logs and send it.", this::showReport);
         TextView imp = item("Import game folder", "Pick your FINAL FANTASY IX folder (Steam, with Memoria; Moguri Mod if you use it). It is copied into the app once.",
                 () -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME));
+        Updater.Release up = Updater.available;
+        item(up != null ? "Update to " + up.version + "  ●" : "Check for updates",
+                up != null ? "A newer FF9Recomp is out. Your imported game, mods and saves are kept." : "Look for a newer FF9Recomp on GitHub.",
+                this::updateOrCheck);
         item("Quit", "Close the launcher, and the game if it is running.", this::quit);
         if (!has) status.setText("No game imported yet.");
         else if (missing != null) status.setText(missing);
@@ -156,9 +162,61 @@ public class LauncherActivity extends Activity {
         String exit = Reports.lastGameExit(this);
         if (exit != null && exit.startsWith("crashed")) status.append("\nThe game last " + exit + ". Report a problem sends the details.");
         (ready ? play : imp).requestFocus();
+        if (!Updater.busy && System.currentTimeMillis() - Updater.lastCheck > 3600_000L) checkUpdates(false);
+        // achievements earned while playing go to Steam when the launcher is back
+        new Thread(() -> {
+            try { SteamLink sl = new SteamLink(this); if (sl.signedIn() && sl.waiting() > 0) sl.sync(); } catch (Exception ignored) { }
+        }).start();
     }
 
-    private void play() {
+    // ------------------------------------------------------------------ updates
+
+    private void checkUpdates(boolean loud) {
+        Updater.busy = true;
+        new Thread(() -> {
+            String msg;
+            try {
+                Updater.Release r = Updater.check(this);
+                msg = r != null ? "FF9Recomp " + r.version + " is out." : "FF9Recomp is up to date.";
+            } catch (Exception e) {
+                msg = "Could not check for updates: " + e.getMessage();
+            }
+            Updater.busy = false;
+            String m = msg;
+            runOnUiThread(() -> {
+                if (!page.equals("main")) return;
+                boolean had = Updater.available != null;
+                if (loud || had) { showMain(); status.setText(m); }
+            });
+        }).start();
+    }
+
+    private void updateOrCheck() {
+        if (Updater.busy) return;
+        Updater.Release r = Updater.available;
+        if (r == null) { status.setText("Checking..."); checkUpdates(true); return; }
+        Updater.busy = true;
+        new Thread(() -> {
+            try {
+                Updater.install(this, r);
+            } catch (Exception e) {
+                Updater.busy = false;
+                Updater.status = "Update failed: " + e.getMessage();
+            }
+        }).start();
+        Runnable tick = new Runnable() {
+            @Override public void run() {
+                if (status == null) return;
+                status.setText(Updater.status + (Updater.percent >= 0 ? " " + Updater.percent + "%" : ""));
+                if (Updater.busy) root.postDelayed(this, 300);
+            }
+        };
+        root.post(tick);
+    }
+
+    private void play() { play(false); }
+
+    private void play(boolean autoload) {
         if (busy || !install.hasGame() || install.missingMessage() != null) return;
         try {
             Settings.apply(this, install.game);
@@ -166,13 +224,146 @@ public class LauncherActivity extends Activity {
             status.setText("Could not write the settings into Memoria.ini: " + e.getMessage());
             return;
         }
-        startActivity(new Intent(this, GameActivity.class));
+        Intent g = new Intent(this, GameActivity.class).putExtra("autoload", autoload);
+        // Swap screens: the game on the second display (the panels then sit on this one)
+        if (Settings.prefs(this).getBoolean("swap_screens", false)) {
+            android.hardware.display.DisplayManager dm = (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
+            android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+            if (ds.length > 0) {
+                android.app.ActivityOptions o = android.app.ActivityOptions.makeBasic();
+                o.setLaunchDisplayId(ds[0].getDisplayId());
+                startActivity(g.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK), o.toBundle());
+                return;
+            }
+        }
+        startActivity(g);
     }
 
     private void quit() {
         int pid = TestControl.gamePid(this);
         if (pid > 0) android.os.Process.killProcess(pid);
         finishAndRemoveTask();
+    }
+
+    // ------------------------------------------------------------------ save states
+
+    private void showStates() {
+        page = "states";
+        newWindow("Save states", true);
+        TextView first = null;
+        for (int i = 1; i <= SaveStates.SLOTS; i++) {
+            int slot = i;
+            String d = SaveStates.describe(this, slot);
+            TextView v = item("Slot " + slot + ":  " + (d == null ? "empty" : d),
+                    d == null ? "In game, Select+R1 keeps the current place here." : "A resumes here (at the start of that place). Y deletes it.",
+                    () -> resume(slot));
+            v.setTag(slot);
+            if (first == null) first = v;
+        }
+        status.setText("Slots keep the place the party entered last. B to go back.");
+        if (first != null) first.requestFocus();
+    }
+
+    private void resume(int slot) {
+        if (!SaveStates.used(this, slot)) return;
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first (Select+Start)."); return; }
+        try {
+            SaveStates.restore(this, slot);
+        } catch (Exception e) {
+            status.setText("Could not resume: " + e.getMessage());
+            return;
+        }
+        play(true);
+    }
+
+    // ------------------------------------------------------------------ achievements
+
+    private void showAchievements() {
+        page = "achievements";
+        newWindow("Achievements", true);
+        java.util.List<String> got = Achievements.unlocked(this);
+        item(got.size() + " unlocked", "Unlocked as you play. Steam: " + (Achievements.steamNote(this)), null).setTag(null);
+        SteamLink st = new SteamLink(this);
+        if (!st.signedIn())
+            item("Sign in to Steam", "Send these to your Steam account: scan a QR code with the Steam app. You never type your password here.", this::steamSignIn);
+        else {
+            item("Send to Steam now", "Signed in as " + st.account() + ".", this::steamSync);
+            item("Sign out of Steam", "Achievements stay here; they are sent again after you sign in.", () -> { st.signOut(); showAchievements(); });
+        }
+        for (String id : got) item(Achievements.pretty(id), id, null);
+        status.setText("B to go back.");
+        window.getChildAt(0).requestFocus();
+    }
+
+    private void steamSync() {
+        busy = true;
+        status.setText("Talking to Steam...");
+        new Thread(() -> {
+            String m;
+            try {
+                java.util.List<String> got = new SteamLink(this).sync();
+                m = got.isEmpty() ? "Steam is up to date." : "Sent to Steam: " + String.join(", ", got);
+            } catch (Exception e) {
+                m = "Steam: " + SteamLink.message(e);
+            }
+            String mm = m;
+            runOnUiThread(() -> { busy = false; showAchievements(); status.setText(mm); });
+        }).start();
+    }
+
+    private void steamSignIn() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(dp(16), dp(12), dp(16), dp(4));
+        TextView how = new TextView(this);
+        how.setText("On your phone: open the Steam app, tap the Steam Guard shield, then \"Scan a QR code\", and approve the sign-in.");
+        how.setTextColor(TEXT);
+        box.addView(how);
+        android.widget.ImageView qr = new android.widget.ImageView(this);
+        qr.setBackgroundColor(Color.WHITE);
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int size = Math.max(dp(150), Math.min(dp(260), Math.min(dm.widthPixels, dm.heightPixels) - dp(220)));
+        box.addView(qr, new LinearLayout.LayoutParams(size, size));
+        TextView st = new TextView(this);
+        st.setText("Connecting to Steam...");
+        st.setTextColor(DIM);
+        box.addView(st);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(box);
+        final java.util.concurrent.Future<?>[] cancel = new java.util.concurrent.Future<?>[1];
+        final boolean[] open = { true };
+        android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Sign in to Steam").setView(sv).setNegativeButton("Cancel", null).show();
+        dlg.setOnDismissListener(d -> { open[0] = false; if (cancel[0] != null) cancel[0].cancel(true); });
+        SteamLink link = new SteamLink(this);
+        new Thread(() -> link.signInQr(new SteamLink.QrListener() {
+            @Override public void qr(String url) {
+                android.graphics.Bitmap bm = qrBitmap(url, size);
+                runOnUiThread(() -> { qr.setImageBitmap(bm); st.setText("Waiting for the Steam app..."); });
+            }
+            @Override public void done(String error) {
+                runOnUiThread(() -> {
+                    if (open[0]) dlg.dismiss();
+                    showAchievements();
+                    if (error == null) status.setText("Signed in to Steam as " + link.account() + ".");
+                    else if (!error.equals("cancelled")) status.setText("Not signed in: " + error);
+                });
+            }
+        }, cancel), "steam-sign-in").start();
+    }
+
+    private static android.graphics.Bitmap qrBitmap(String text, int size) {
+        try {
+            com.google.zxing.common.BitMatrix m = new com.google.zxing.qrcode.QRCodeWriter()
+                    .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size);
+            int[] px = new int[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++) px[y * size + x] = m.get(x, y) ? Color.BLACK : Color.WHITE;
+            return android.graphics.Bitmap.createBitmap(px, size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ settings
@@ -187,10 +378,39 @@ public class LauncherActivity extends Activity {
             v.setOnClickListener(x -> change(v, 1));
             if (first == null) first = v;
         }
+        item(storageLabel(), "Keep the imported game, mods and saves on the SD card or in internal storage. Moving copies everything, then removes the old copy.",
+                this::moveStorage);
         item("Arrange touch controls", "Drag the on-screen buttons where you want them; set their size and opacity.",
                 () -> startActivity(new Intent(this, TouchLayoutActivity.class)));
         status.setText("Left/right or A to change. B to go back. Applied when the game starts.");
         if (first != null) first.requestFocus();
+    }
+
+    private String storageLabel() {
+        return "Storage:  " + (Storage.onSd(this) ? "SD card" + (Storage.sdMissing(this) ? " (not inserted)" : "") : "Internal");
+    }
+
+    private void moveStorage() {
+        boolean toSd = !Storage.onSd(this);
+        if (toSd && Storage.sdRoot(this) == null) { status.setText("No SD card is inserted."); return; }
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first."); return; }
+        busy = true;
+        new Thread(() -> {
+            String msg;
+            try {
+                Storage.move(this, toSd, what -> runOnUiThread(() -> status.setText(what)));
+                msg = toSd ? "Your files are on the SD card now." : "Your files are in internal storage now.";
+            } catch (Exception e) {
+                msg = "Moving failed, nothing changed: " + e.getMessage();
+            }
+            String m = msg;
+            runOnUiThread(() -> {
+                busy = false;
+                install = new GameInstall(this);
+                showSettings();
+                status.setText(m);
+            });
+        }).start();
     }
 
     private void change(TextView v, int dir) {
@@ -282,6 +502,10 @@ public class LauncherActivity extends Activity {
             if (!down) return true;
             if (!page.equals("main")) showMain();
             else if (code == KeyEvent.KEYCODE_BACK) moveTaskToBack(true);
+            return true;
+        }
+        if (page.equals("states") && code == KeyEvent.KEYCODE_BUTTON_Y && f != null && f.getTag() instanceof Integer) {
+            if (down) { SaveStates.delete(this, (Integer) f.getTag()); int at = (Integer) f.getTag(); showStates(); window.getChildAt(at - 1).requestFocus(); }
             return true;
         }
         if (page.equals("settings") && f instanceof TextView && f.getTag() instanceof Settings.Option

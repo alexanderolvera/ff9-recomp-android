@@ -4,6 +4,7 @@
  * Gamepad input (XInputInterface) lives in input.c. */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define EXPORT __attribute__((visibility("default")))
@@ -68,18 +69,52 @@ EXPORT BOOL SetNamedPipeHandleState(const char *n, uint32_t *a, uint32_t *b, uin
 EXPORT BOOL PeekNamedPipe(intptr_t h, void *b, uint32_t n, void *r, uint32_t *avail, void *left) { if (avail) *avail = 0; return 0; }
 EXPORT void RtlFillMemory(void *dst, uint32_t len, uint8_t fill) { memset(dst, fill, len); }
 
-/* ---- steamwrapper: no Steam on Android ---- */
-EXPORT BOOL Init(void) { return 0; }
+/* ---- steamwrapper: achievements without Steam. With FF9_ACHIEVEMENTS set (the APK sets it to
+   files/achievements.txt) the wrapper reports itself ready, answers the game's stats requests and
+   writes each achievement the game unlocks (its Steam API name) as a line of that file; the app
+   lists them and can send them to Steam (SteamLink.java). The callbacks run on the game's thread,
+   from ProcessCallbacks_Internal, as Steam's do. Without it: no Steam, as before. */
+typedef void (*steam_result_cb)(int ok);
+typedef void (*steam_void_cb)(void);
+static steam_result_cb steam_stats_received, steam_stats_stored;
+static steam_void_cb steam_achievement_stored;
+static int steam_pending_received, steam_pending_stored, steam_pending_achievement;
+
+static const char *achievements_file(void) { return getenv("FF9_ACHIEVEMENTS"); }
+
+EXPORT BOOL Init(void) { return achievements_file() != NULL; }
 EXPORT void Shutdown_Internal(void) {}
-EXPORT void ProcessCallbacks_Internal(void) {}
-EXPORT BOOL TriggerAchievement_Internal(void *id) { return 0; }
-EXPORT BOOL UpdateStatProgress_Internal(void *id, int p) { return 0; }
-EXPORT BOOL ClearAchievement_Internal(void *id) { return 0; }
+EXPORT void ProcessCallbacks_Internal(void) {
+    if (steam_pending_received && steam_stats_received) { steam_pending_received = 0; steam_stats_received(1); }
+    if (steam_pending_stored && steam_stats_stored) { steam_pending_stored = 0; steam_stats_stored(1); }
+    if (steam_pending_achievement && steam_achievement_stored) { steam_pending_achievement = 0; steam_achievement_stored(); }
+}
+EXPORT BOOL TriggerAchievement_Internal(const char *id) {
+    const char *path = achievements_file();
+    if (!path || !id || !*id) return 0;
+    /* once per achievement */
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (strcmp(line, id) == 0) { fclose(f); steam_pending_achievement = 1; return 1; }
+        }
+        fclose(f);
+    }
+    f = fopen(path, "a");
+    if (f) { fprintf(f, "%s\n", id); fclose(f); }
+    printf("achievement unlocked: %s\n", id);
+    steam_pending_achievement = 1;
+    return 1;
+}
+EXPORT BOOL UpdateStatProgress_Internal(const char *id, int p) { steam_pending_stored = 1; return achievements_file() != NULL; }
+EXPORT BOOL ClearAchievement_Internal(const char *id) { return achievements_file() != NULL; }
 EXPORT BOOL IsCloudEnabled_Internal(void) { return 0; }
-EXPORT void RegisterStatsReceivedCallback(void *cb) {}
-EXPORT void RegisterStatsStoredCallback(void *cb) {}
-EXPORT void RegisterAchievementStoredCallback(void *cb) {}
-EXPORT BOOL RequestStats(void) { return 0; }
+EXPORT void RegisterStatsReceivedCallback(void *cb) { steam_stats_received = (steam_result_cb)cb; }
+EXPORT void RegisterStatsStoredCallback(void *cb) { steam_stats_stored = (steam_result_cb)cb; }
+EXPORT void RegisterAchievementStoredCallback(void *cb) { steam_achievement_stored = (steam_void_cb)cb; }
+EXPORT BOOL RequestStats(void) { if (!achievements_file()) return 0; steam_pending_received = 1; return 1; }
 EXPORT void SetSendAchievementToCS(void *cb) {}
 EXPORT BOOL SteamAPIRestartAppIfNecessary(int app) { return 0; }
 

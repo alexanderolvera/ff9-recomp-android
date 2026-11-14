@@ -24,6 +24,8 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     static native void nativeSetSurface(Object surface);
     static native int nativeRun(String dir, String log);
     static native String nativeCompanion();
+    static native int nativeRumble();
+    static native int nativeFrames();
     static native void nativePad(int buttons, int lt, int rt, int lx, int ly, int rx, int ry);
 
     // XInput button bits
@@ -37,6 +39,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        current = this;
         Reports.installCrashHandler(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         root = new android.widget.FrameLayout(this);
@@ -52,8 +55,22 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             root.addView(touch, new android.widget.FrameLayout.LayoutParams(-1, -1));
             ((android.hardware.input.InputManager) getSystemService(INPUT_SERVICE)).registerInputDeviceListener(deviceListener, null);
         }
+        if (prefs.getBoolean("crt_filter", false)) root.addView(new CrtOverlay(this), new android.widget.FrameLayout.LayoutParams(-1, -1));
+        if (prefs.getBoolean("show_fps", false)) {
+            fpsView = new android.widget.TextView(this);
+            fpsView.setTextColor(android.graphics.Color.YELLOW);
+            fpsView.setTextSize(14);
+            fpsView.setShadowLayer(3, 1, 1, android.graphics.Color.BLACK);
+            fpsView.setPadding(16, 8, 16, 8);
+            root.addView(fpsView, new android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP | android.view.Gravity.END));
+        }
+        rumble = prefs.getInt("rumble", 1);
+        crt = prefs.getBoolean("crt_filter", false);
         setContentView(root);
+        // Smooth 120: ask the display for its fastest mode at this resolution (the Thor's 120 Hz)
+        if (prefs.getInt("fps", 0) == 2) preferHighestRefreshRate();
         if (prefs.getBoolean("bottom_screen", true)) showCompanion();
+        ui.post(poller);
         updateTouch();
         hideSystemUi();
         android.content.IntentFilter padFilter = new android.content.IntentFilter("com.ff9recomp.test.PAD");
@@ -67,10 +84,11 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     // takes focus; keys and sticks that reach it go to the game
     private android.app.Presentation companion;
     private static volatile boolean companionOn;
+    static volatile GameActivity current;
+    Activity companionHost;      // the panels on the main display when the screens are swapped
 
     /** The game's latest panel state (JSON) for CompanionView, or null. */
     static String companionState() {
-        if (!companionOn) return null;
         try { return nativeCompanion(); } catch (UnsatisfiedLinkError e) { return null; }
     }
 
@@ -79,13 +97,30 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
         if (ds.length == 0) { Log.i(TAG, "no second display"); return; }
         android.view.Display d = ds[0];
+        android.view.Display mine = getDisplay();
+        if (mine != null && mine.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) {
+            // swapped: the game is on the second display, the panels go to the main one
+            Log.i(TAG, "screens swapped: panels on the main display");
+            try {
+                android.app.ActivityOptions o = android.app.ActivityOptions.makeBasic();
+                o.setLaunchDisplayId(android.view.Display.DEFAULT_DISPLAY);
+                startActivity(new android.content.Intent(this, CompanionHostActivity.class)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION), o.toBundle());
+                companionOn = true;
+                try { Os.setenv("FF9_COMPANION", "1", true); } catch (Exception ignored) { }
+            } catch (RuntimeException e) { Log.w(TAG, "panels not shown on the main display: " + e); }
+            return;
+        }
         Log.i(TAG, "panels on display " + d.getDisplayId() + " \"" + d.getName() + "\"");
         companion = new android.app.Presentation(this, d) {
             @Override public boolean dispatchKeyEvent(KeyEvent e) { return GameActivity.this.dispatchKeyEvent(e); }
             @Override public boolean dispatchGenericMotionEvent(MotionEvent e) { return GameActivity.this.dispatchGenericMotionEvent(e); }
         };
         companion.getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        companion.setContentView(new CompanionView(companion.getContext()));
+        android.widget.FrameLayout panels = new android.widget.FrameLayout(companion.getContext());
+        panels.addView(new CompanionView(companion.getContext()));
+        if (crt) panels.addView(new CrtOverlay(companion.getContext()), new android.widget.FrameLayout.LayoutParams(-1, -1));
+        companion.setContentView(panels);
         try {
             companion.show();
             companionOn = true;
@@ -94,6 +129,58 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             Log.w(TAG, "panels not shown: " + e);
             companion = null;
         }
+    }
+
+    // ---- FPS counter and rumble (polled from the host every 50 ms)
+    private android.widget.TextView fpsView;
+    private int rumble, lastFrames = -1, lastRumble;
+    private boolean crt;
+    private long lastFpsAt, lastRumbleAt;
+    private final Runnable poller = new Runnable() {
+        @Override public void run() {
+            try {
+                long now = android.os.SystemClock.uptimeMillis();
+                if (fpsView != null && now - lastFpsAt >= 500) {
+                    int f = nativeFrames();
+                    if (lastFrames >= 0) fpsView.setText(Math.round((f - lastFrames) * 1000.0 / (now - lastFpsAt)) + " FPS");
+                    lastFrames = f;
+                    lastFpsAt = now;
+                }
+                if (rumble != 0) {
+                    int r = nativeRumble();
+                    // a level held by the game is renewed in slices; zero stops it
+                    if (r != lastRumble || (r != 0 && now - lastRumbleAt >= 100)) { lastRumble = r; lastRumbleAt = now; vibrate(Math.max(r >> 8, r & 0xFF)); }
+                }
+            } catch (UnsatisfiedLinkError ignored) { }
+            ui.postDelayed(this, 50);
+        }
+    };
+
+    /** The game's rumble on the controller's motor when it has one, else the device's. */
+    private void vibrate(int strength) {
+        android.os.Vibrator v = null;
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (isGamepad(d) && d.getVibratorManager().getVibratorIds().length > 0) { v = d.getVibratorManager().getDefaultVibrator(); break; }
+        }
+        if (v == null) v = ((android.os.VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE)).getDefaultVibrator();
+        if (v == null || !v.hasVibrator()) return;
+        if (strength == 0) { v.cancel(); return; }
+        int amp = Math.max(1, Math.min(255, rumble == 2 ? strength : strength * 2 / 3));   // Light: two thirds
+        // the game sets a motor level and later zero: vibrate in short slices while it is on
+        v.vibrate(android.os.VibrationEffect.createOneShot(120, v.hasAmplitudeControl() ? amp : android.os.VibrationEffect.DEFAULT_AMPLITUDE));
+    }
+
+    private void preferHighestRefreshRate() {
+        android.view.Display d = getDisplay();
+        if (d == null) return;
+        android.view.Display.Mode cur = d.getMode(), best = cur;
+        for (android.view.Display.Mode m : d.getSupportedModes())
+            if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() > best.getRefreshRate()) best = m;
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.preferredDisplayModeId = best.getModeId();
+        getWindow().setAttributes(lp);
+        Log.i(TAG, "display mode " + best.getRefreshRate() + " Hz");
     }
 
     // ---- touch controls and controller detection
@@ -113,7 +200,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     private void updateTouch() {
         if (touch == null) return;
-        boolean show = touchMode == 1 || (touchMode == 0 && companion == null && !gamepadConnected());
+        boolean show = touchMode == 1 || (touchMode == 0 && companion == null && companionHost == null && !gamepadConnected());
         touch.setVisibility(show ? View.VISIBLE : View.GONE);
         if (!show && (touchButtons | touchLt | touchRt) != 0) { touchButtons = touchLt = touchRt = 0; send(); }
     }
@@ -129,6 +216,8 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     protected void onDestroy() {
         try { unregisterReceiver(testPad); } catch (Exception ignored) { }
         if (companion != null) { companion.dismiss(); companion = null; }
+        if (companionHost != null) { companionHost.finish(); companionHost = null; }
+        if (current == this) current = null;
         super.onDestroy();
     }
 
@@ -169,6 +258,12 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 Os.setenv("FF9_MANAGED", new File(gi.game, "x64/FF9_Data/Managed").getPath(), true);
                 Os.setenv("FF9_GAME", gi.game.getPath(), true);
                 Os.setenv("LD_LIBRARY_PATH", nat, true);
+                Os.setenv("FF9_COMPANION", "1", true);
+                Os.setenv("FF9_ACHIEVEMENTS", Achievements.file(this).getPath(), true);   // src/host/win32.c     // the game's state for the panels and save-state names
+                // resume a save state, or Settings > Start: Continue (Memoria loads its autosave at once)
+                boolean autoload = getIntent().getBooleanExtra("autoload", false)
+                        || getSharedPreferences("launcher", MODE_PRIVATE).getInt("start", 0) == 1;
+                if (autoload && SaveStates.autosave(this).isFile()) Os.setenv("FF9_ARGS", "-memoria-autoload", true);
             } catch (Exception e) {
                 Log.e(TAG, "runtime setup failed", e);
                 Reports.writeText(new File(gi.files, "setup-error.txt"), Log.getStackTraceString(e));
@@ -242,6 +337,10 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         // Select+Start together is ours (leave the game): the game sees neither while both are held
         int toGame = (all & (START | BACK)) == (START | BACK) ? all & ~(START | BACK) : all;
         nativePad(toGame, Math.max(lt, touchLt), Math.max(rt, touchRt), lx, ly, rx, ry);
+        // Select+R1: keep the current place in a save-state slot
+        boolean keepCombo = (all & (BACK | RB)) == (BACK | RB);
+        if (keepCombo && !keepHeld) keepState();
+        keepHeld = keepCombo;
         // Select+Start held for a second: the leave-the-game dialog
         boolean combo = (all & (START | BACK)) == (START | BACK);
         if (combo != quitHeld) {
@@ -253,6 +352,21 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     // ---- leaving the game: Select+Start held, then Leave. Ends the game's process (":game");
     // the launcher (its own process) is back. Unsaved progress is lost, as the dialog says.
+    private boolean keepHeld;
+
+    private void keepState() {
+        String place = "";
+        try { place = CompanionView.clean(new org.json.JSONObject(String.valueOf(companionState())).optString("loc")); } catch (Exception ignored) { }
+        String p = place;
+        new Thread(() -> {
+            String msg;
+            try { msg = "Save state " + SaveStates.keep(this, p) + ": " + (p.isEmpty() ? "kept" : p); }
+            catch (Exception e) { msg = "No save state: " + e.getMessage(); }
+            String m = msg;
+            runOnUiThread(() -> android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show());
+        }).start();
+    }
+
     private final Runnable askQuit = this::askQuit;
     private boolean quitHeld;
     private android.app.AlertDialog quitDialog;
