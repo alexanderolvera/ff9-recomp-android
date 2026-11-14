@@ -34,15 +34,39 @@ public sealed class ScriptMethods {
         return null;
     }
 
+    /// Compiled callers (no reflection per call): (instance, arg) -> return value or null.
+    static readonly Dictionary<MethodInfo, Func<object, object?, object?>> invokers = new();
+
+    static Func<object, object?, object?> Invoker(MethodInfo mi) {
+        if (invokers.TryGetValue(mi, out var f)) return f;
+        var ps = mi.GetParameters();
+        var dm = new System.Reflection.Emit.DynamicMethod("call_" + mi.Name, typeof(object), new[] { typeof(object), typeof(object) }, mi.DeclaringType!.Module, true);
+        var il = dm.GetILGenerator();
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+        il.Emit(System.Reflection.Emit.OpCodes.Castclass, mi.DeclaringType!);
+        if (ps.Length == 1) {
+            il.Emit(System.Reflection.Emit.OpCodes.Ldarg_1);
+            var pt = ps[0].ParameterType;
+            il.Emit(pt.IsValueType ? System.Reflection.Emit.OpCodes.Unbox_Any : System.Reflection.Emit.OpCodes.Castclass, pt);
+        }
+        il.Emit(mi.IsVirtual ? System.Reflection.Emit.OpCodes.Callvirt : System.Reflection.Emit.OpCodes.Call, mi);
+        if (mi.ReturnType == typeof(void)) il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+        else if (mi.ReturnType.IsValueType) il.Emit(System.Reflection.Emit.OpCodes.Box, mi.ReturnType);
+        il.Emit(System.Reflection.Emit.OpCodes.Ret);
+        f = (Func<object, object?, object?>)dm.CreateDelegate(typeof(Func<object, object?, object?>));
+        invokers[mi] = f;
+        return f;
+    }
+
     /// Calls a message; exceptions are logged and swallowed, as Unity does. A message that
     /// returns IEnumerator (e.g. "IEnumerator Start()") is started as a coroutine.
     public static void Call(Core.NMonoBehaviour mb, MethodInfo? mi, object? arg = null) {
-        if (mi == null) return;
+        if (mi == null || mb.Managed == null) return;
         try {
-            object? r = mi.Invoke(mb.Managed, mi.GetParameters().Length == 1 ? new[] { arg } : null);
+            object? r = Invoker(mi)(mb.Managed, arg);
             if (r is IEnumerator e) Coroutines.Start(mb, e);
-        } catch (TargetInvocationException ex) {
-            Log.Exception(ex.InnerException ?? ex, $"{mb.Managed!.GetType().Name}.{mi.Name}");
+        } catch (Exception ex) {
+            Log.Exception(ex is TargetInvocationException t ? t.InnerException ?? ex : ex, $"{mb.Managed!.GetType().Name}.{mi.Name}");
         }
     }
 }
