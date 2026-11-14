@@ -45,7 +45,7 @@ import java.util.Map;
  * confirms, B goes back to the commands.
  */
 public class LauncherActivity extends Activity {
-    private static final int PICK_GAME = 1;
+    private static final int PICK_GAME = 1, PICK_SAVE = 2;
     private static final int BG = Color.rgb(8, 9, 14), TEXT = 0xFFF2EEE2, DIM = 0xFFAEB0BC, ACCENT = 0xFFE8C66A;
     private static final int WIN_TOP = 0xFF5E6478, WIN_BOTTOM = 0xFF22252F, HOT_TOP = 0xFF8A8466, HOT_BOTTOM = 0xFF3E3A2A,
             BTN_TOP = 0xFF4A4F60, BTN_BOTTOM = 0xFF262935, BORDER = 0xFFDCD6C4, INNER = 0xFF3A3F50;
@@ -58,6 +58,7 @@ public class LauncherActivity extends Activity {
     private String page = "settings";
     private boolean busy, withSaves;
     private ModCatalog.Mod modShown;
+    private String testArgs;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -131,12 +132,14 @@ public class LauncherActivity extends Activity {
 
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleTestIntent(i); }
 
-    @Override protected void onResume() { super.onResume(); hideSystemBars(); if (!busy) { View f = getCurrentFocus(); refresh(); if (f != null && !inContent(f)) f.requestFocus(); } }
+    @Override protected void onResume() { super.onResume(); Sfx.load(this); hideSystemBars(); if (!busy) { View f = getCurrentFocus(); refresh(); if (f != null && !inContent(f)) f.requestFocus(); } }
 
     /** adb test API: am start ... --ez test_play true presses Play once the launcher is ready. */
     private void handleTestIntent(Intent i) {
         if (i != null && i.getBooleanExtra(TestControl.EXTRA_PLAY, false)) {
             i.removeExtra(TestControl.EXTRA_PLAY);
+            testArgs = i.getStringExtra("test_args");     // adb tests: Memoria's launch options (e.g. "-memoria-battle 336")
+            i.removeExtra("test_args");
             content.post(this::play);
         }
     }
@@ -211,6 +214,7 @@ public class LauncherActivity extends Activity {
             return;
         }
         Intent g = new Intent(this, GameActivity.class).putExtra("autoload", autoload);
+        if (testArgs != null) { g.putExtra("test_args", testArgs); testArgs = null; }
         if (Settings.prefs(this).getBoolean("swap_screens", false)) {
             android.hardware.display.DisplayManager dm = (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
             android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
@@ -238,7 +242,7 @@ public class LauncherActivity extends Activity {
         { "Game", "start", "boosters", "speed", "turbo_dialog" },
         { "Controls", "swap_confirm", "analog_run", "touch_controls", "rumble" },
         { "Screens", "bottom_screen", "swap_screens" },
-        { "Sound", "music_volume", "sound_volume" },
+        { "Sound", "menu_sounds", "music_volume", "sound_volume" },
     };
 
     /** A short note beside a choice, as FF7Recomp's frame-rate list has. */
@@ -287,6 +291,23 @@ public class LauncherActivity extends Activity {
                 }
             }
         }
+        TextView gh = heading("Guide");
+        gh.setPadding(0, dp(14), 0, dp(4));
+        col.addView(gh);
+        col.addView(note("A walkthrough page of your choice on the second screen: Select+L1 switches between it and the panels; scroll it by touch. Leave empty for none."));
+        android.widget.EditText url = new android.widget.EditText(this);
+        url.setSingleLine(true);
+        url.setHint("https://... (a guide page you like)");
+        url.setText(Settings.prefs(this).getString("guide_url", ""));
+        url.setTextColor(TEXT);
+        url.setHintTextColor(DIM);
+        url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        url.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { Settings.prefs(LauncherActivity.this).edit().putString("guide_url", e.toString().trim()).apply(); }
+        });
+        col.addView(url);
         col.addView(space(8));
         LinearLayout r = row();
         r.addView(button("Arrange touch controls", v -> startActivity(new Intent(this, TouchLayoutActivity.class))));
@@ -544,6 +565,14 @@ public class LauncherActivity extends Activity {
         actions.addView(button(has ? "Import again" : "Import game folder", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME)));
         col.addView(actions);
 
+        TextView hs = heading("Saves");
+        hs.setPadding(0, dp(14), 0, dp(4));
+        col.addView(hs);
+        col.addView(note("Bring your PC saves: pick SavedData_ww.dat from the PC (in AppData/LocalLow/SquareEnix/FINAL FANTASY IX/Steam/EncryptedSavedData). The saves here are kept as a backup first."));
+        LinearLayout sv = row();
+        sv.addView(button("Import a PC save", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PICK_SAVE)));
+        col.addView(sv);
+
         TextView h = heading("Storage");
         h.setPadding(0, dp(14), 0, dp(4));
         col.addView(h);
@@ -668,6 +697,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == PICK_SAVE && res == RESULT_OK && data != null) { importSave(data.getData()); return; }
         if (req != PICK_GAME || res != RESULT_OK || data == null) return;
         Uri tree = data.getData();
         busy = true;
@@ -687,6 +717,27 @@ public class LauncherActivity extends Activity {
         }).start();
     }
 
+    /** A PC save file (SavedData_ww.dat, the Steam release's: the same format the game uses here). */
+    private void importSave(Uri uri) {
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first (Select+Start)."); return; }
+        try {
+            byte[] b;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) { b = in.readAllBytes(); }
+            if (b.length < 100_000) throw new java.io.IOException("this is not FF9's save file (SavedData_ww.dat is a few megabytes)");
+            File dir = Reports.savesDir(this);
+            dir.mkdirs();
+            File cur = new File(dir, "SavedData_ww.dat");
+            if (cur.isFile()) {
+                String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date());
+                if (!cur.renameTo(new File(dir, "SavedData_ww.dat.before-import-" + stamp))) throw new java.io.IOException("cannot keep the current saves");
+            }
+            java.nio.file.Files.write(cur.toPath(), b);
+            status.setText("PC saves imported: Load Game on the title screen shows them. Your earlier saves are kept beside them as a backup.");
+        } catch (Exception e) {
+            status.setText("Save import failed: " + e.getMessage());
+        }
+    }
+
     // ------------------------------------------------------------------ keys
 
     @Override
@@ -695,8 +746,17 @@ public class LauncherActivity extends Activity {
         View f = getCurrentFocus();
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
         if (code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_DPAD_CENTER) {
-            if (down && e.getRepeatCount() == 0 && f != null) f.performClick();
+            if (down && e.getRepeatCount() == 0 && f != null) { Sfx.play(this, f.isEnabled() ? Sfx.CURSOR : Sfx.BUZZER); f.performClick(); }
             return true;
+        }
+        if (down && (code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_BACK) && e.getRepeatCount() == 0 && inContent(f)) Sfx.play(this, Sfx.CANCEL);
+        // right from the commands goes into the page
+        if (code == KeyEvent.KEYCODE_DPAD_RIGHT && f != null && !inContent(f)) { if (down) { Sfx.play(this, Sfx.CURSOR); focusContent(); } return true; }
+        if (down && (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            View before = f;
+            boolean r = super.dispatchKeyEvent(e);
+            if (getCurrentFocus() != before) Sfx.play(this, Sfx.CURSOR);
+            return r;
         }
         if (code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (!down || e.getRepeatCount() > 0) return true;
@@ -709,8 +769,6 @@ public class LauncherActivity extends Activity {
             if (down) { int slot = (Integer) f.getTag(); SaveStates.delete(this, slot); refresh(); focusTagged(slot); }
             return true;
         }
-        // right from the commands goes into the page
-        if (code == KeyEvent.KEYCODE_DPAD_RIGHT && f != null && !inContent(f)) { if (down) focusContent(); return true; }
         return super.dispatchKeyEvent(e);
     }
 

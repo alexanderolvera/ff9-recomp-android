@@ -38,6 +38,7 @@ EXPORT uint32_t XInputGamePadGetState(uint32_t player, XInputRawState *s) {
 volatile float ff9_rumble_left, ff9_rumble_right;
 EXPORT void XInputGamePadSetState(uint32_t player, float left, float right) {
     if (player != 0) return;
+    if ((left > 0) != (ff9_rumble_left > 0) || (right > 0) != (ff9_rumble_right > 0)) printf("rumble %.2f %.2f\n", left, right);
     ff9_rumble_left = left;
     ff9_rumble_right = right;
 }

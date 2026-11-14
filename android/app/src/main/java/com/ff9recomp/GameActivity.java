@@ -119,6 +119,19 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         companion.getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         android.widget.FrameLayout panels = new android.widget.FrameLayout(companion.getContext());
         panels.addView(new CompanionView(companion.getContext()));
+        // the guide (Settings > Guide page): a web page the player chose, on this screen, swapped
+        // with the panels by Select+L1; scrolled by touch
+        String guideUrl = getSharedPreferences("launcher", MODE_PRIVATE).getString("guide_url", "");
+        if (!guideUrl.isEmpty()) {
+            guide = new android.webkit.WebView(companion.getContext());
+            guide.getSettings().setJavaScriptEnabled(true);
+            guide.getSettings().setDomStorageEnabled(true);
+            guide.setWebViewClient(new android.webkit.WebViewClient());
+            guide.setFocusable(false);
+            guide.setVisibility(View.GONE);
+            panels.addView(guide, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            guidePending = guideUrl;
+        }
         if (crt) panels.addView(new CrtOverlay(companion.getContext()), new android.widget.FrameLayout.LayoutParams(-1, -1));
         companion.setContentView(panels);
         try {
@@ -259,11 +272,14 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 Os.setenv("FF9_GAME", gi.game.getPath(), true);
                 Os.setenv("LD_LIBRARY_PATH", nat, true);
                 Os.setenv("FF9_COMPANION", "1", true);
+                Os.setenv("FF9_UI_SOUNDS", Sfx.dir(this).getPath(), true);   // the launcher's menu sounds (Core/UiSounds.cs)
                 Os.setenv("FF9_ACHIEVEMENTS", Achievements.file(this).getPath(), true);   // src/host/win32.c     // the game's state for the panels and save-state names
                 // resume a save state, or Settings > Start: Continue (Memoria loads its autosave at once)
                 boolean autoload = getIntent().getBooleanExtra("autoload", false)
                         || getSharedPreferences("launcher", MODE_PRIVATE).getInt("start", 0) == 1;
                 if (autoload && SaveStates.autosave(this).isFile()) Os.setenv("FF9_ARGS", "-memoria-autoload", true);
+                String testArgs = getIntent().getStringExtra("test_args");
+                if (testArgs != null) Os.setenv("FF9_ARGS", testArgs.trim().replace(' ', '+'), true);
             } catch (Exception e) {
                 Log.e(TAG, "runtime setup failed", e);
                 Reports.writeText(new File(gi.files, "setup-error.txt"), Log.getStackTraceString(e));
@@ -337,6 +353,10 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         // Select+Start together is ours (leave the game): the game sees neither while both are held
         int toGame = (all & (START | BACK)) == (START | BACK) ? all & ~(START | BACK) : all;
         nativePad(toGame, Math.max(lt, touchLt), Math.max(rt, touchRt), lx, ly, rx, ry);
+        // Select+L1: the guide or the panels on the second screen
+        boolean guideCombo = (all & (BACK | LB)) == (BACK | LB);
+        if (guideCombo && !guideHeld) toggleGuide();
+        guideHeld = guideCombo;
         // Select+R1: keep the current place in a save-state slot
         boolean keepCombo = (all & (BACK | RB)) == (BACK | RB);
         if (keepCombo && !keepHeld) keepState();
@@ -352,7 +372,15 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     // ---- leaving the game: Select+Start held, then Leave. Ends the game's process (":game");
     // the launcher (its own process) is back. Unsaved progress is lost, as the dialog says.
-    private boolean keepHeld;
+    private boolean keepHeld, guideHeld;
+    private android.webkit.WebView guide;
+    private String guidePending;
+
+    private void toggleGuide() {
+        if (guide == null) return;
+        if (guidePending != null) { guide.loadUrl(guidePending); guidePending = null; }
+        guide.setVisibility(guide.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+    }
 
     private void keepState() {
         String place = "";

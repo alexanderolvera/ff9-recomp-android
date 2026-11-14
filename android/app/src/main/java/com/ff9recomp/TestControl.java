@@ -36,6 +36,7 @@ public class TestControl extends BroadcastReceiver {
     static {
         for (String k : Settings.INTS) TYPES.put(k, Integer.class);
         for (String k : Settings.BOOLS) TYPES.put(k, Boolean.class);
+        TYPES.put("guide_url", String.class);
     }
 
     @Override
@@ -57,6 +58,7 @@ public class TestControl extends BroadcastReceiver {
                     Object v = b.get(k);
                     if (t == null) { out.put("error", "unknown setting " + k); continue; }
                     if (t == Integer.class) { int i = v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(String.valueOf(v).trim()); e.putInt(k, i); changed.put(k, i); }
+                    else if (t == String.class) { String str = v == null ? "" : String.valueOf(v); e.putString(k, str); changed.put(k, str); }
                     else { boolean z = v instanceof Boolean ? (Boolean) v : Boolean.parseBoolean(String.valueOf(v).trim()); e.putBoolean(k, z); changed.put(k, z); }
                 }
                 e.commit();

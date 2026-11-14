@@ -48,6 +48,7 @@ final class Settings {
         new Option("rumble", "Rumble", "The game's vibration on the controller, or on the device.", 1, "Off", "Light", "Strong"),
         new Option("crt_filter", "CRT filter", "Scanlines and a soft vignette over the game and the panels.", 0),
         new Option("show_fps", "Show FPS", "Frames per second in the top corner.", 0),
+        new Option("menu_sounds", "Menu sounds", "The launcher's cursor sounds, FF9's own from your game files.", 1),
         new Option("music_volume", "Music volume", null, 4, "0%", "25%", "50%", "75%", "100%"),
         new Option("sound_volume", "Sound volume", null, 4, "0%", "25%", "50%", "75%", "100%"),
     };
