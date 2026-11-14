@@ -48,8 +48,12 @@ public static unsafe class Device {
         Log.Info($"GL: {GL.GetString(0x1F01)} / {GL.GetString(0x1F02)}, {(window ? "window" : "pbuffer")} {Width}x{Height}");
     }
 
+    static readonly bool finish = Environment.GetEnvironmentVariable("FF9_FINISH") != null;
+
     public static void Present() {
-        if (Ready) EGL.eglSwapBuffers(Display, Surface);
+        if (!Ready) return;
+        EGL.eglSwapBuffers(Display, Surface);
+        if (finish) GL.glFinish();
     }
 
     /// Reads the default framebuffer to a PNG file.

@@ -24,6 +24,7 @@ public sealed class GpuProgram {
 
 public static class Pipeline {
     static readonly Dictionary<(SubProgram?, SubProgram?, FixedFunction?, string?), GpuProgram> programs = new();
+    public static int ProgramCount => programs.Count;
 
     // current matrices (Unity's "GL" state): model, view, projection
     public static Matrix4x4 Model = M.Identity, View = M.Identity, Proj = M.Identity;
@@ -682,6 +683,8 @@ public static class Pipeline {
         [Icall("UnityEngine.Graphics::ClearRandomWriteTargets")] static void ClearRW() { }
         [Icall("UnityEngine.Graphics::Internal_SetRandomWriteTargetRT")] static void SetRW(int i, RenderTexture rt) { }
 
+        static NMesh? drawTexQuad;
+
         [Icall("UnityEngine.Graphics::DrawTexture")]
         static unsafe void DrawTexture(ref DrawTexArgs a) {
             if (!Device.Ready) return;
@@ -690,13 +693,13 @@ public static class Pipeline {
             var saved = (Model, View, Proj);
             // screen rect in GUI pixel coordinates (top-left origin) -> current projection is set by the caller (GL.LoadPixelMatrix)
             var r = a.screenRect; var s = a.sourceRect;
-            var q = new NMesh {
-                Vertices = new[] { new Vector3(r.x, r.y, 0), new Vector3(r.x + r.width, r.y, 0), new Vector3(r.x + r.width, r.y + r.height, 0), new Vector3(r.x, r.y + r.height, 0) },
-                UV = new[] { new Vector2(s.x, s.y + s.height), new Vector2(s.x + s.width, s.y + s.height), new Vector2(s.x + s.width, s.y), new Vector2(s.x, s.y) },
-            };
+            // one dynamic quad, rewritten per call (a new mesh per call leaked its GL buffers)
+            var q = drawTexQuad ??= new NMesh { Dynamic = true, SubMeshes = new() { new SubMeshData { Indices = new[] { 0, 1, 2, 0, 2, 3 } } } };
+            q.Vertices = new[] { new Vector3(r.x, r.y, 0), new Vector3(r.x + r.width, r.y, 0), new Vector3(r.x + r.width, r.y + r.height, 0), new Vector3(r.x, r.y + r.height, 0) };
+            q.UV = new[] { new Vector2(s.x, s.y + s.height), new Vector2(s.x + s.width, s.y + s.height), new Vector2(s.x + s.width, s.y), new Vector2(s.x, s.y) };
             var c32 = a.color;
             q.Colors = new[] { c32, c32, c32, c32 };
-            q.SubMeshes = new() { new SubMeshData { Indices = new[] { 0, 1, 2, 0, 2, 3 } } };
+            q.Dirty = true;
             if (tex != null) mat.Textures[PropIds.Id("_MainTex")] = (Texture)tex.Managed!;
             var sh = mat.Shader;
             if (sh != null) for (int i = 0; i < sh.Passes.Count; i++) { SetPass(mat, i); DrawMeshNow(q, Model, 0); }

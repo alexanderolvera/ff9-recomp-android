@@ -77,7 +77,10 @@ public static class AssetDB {
         return files.TryGetValue(key, out f) ? f : File(e);
     }
 
-    public static NObject? Loaded(SerializedFile f, long pathId) => loaded.GetValueOrDefault((f, pathId));
+    /// The live object made from (file, pathId); null once it was destroyed (a scene loaded again
+    /// makes its objects anew).
+    public static NObject? Loaded(SerializedFile f, long pathId) =>
+        loaded.TryGetValue((f, pathId), out var n) && Core.Registry.ById(n.Id) == n ? n : null;
 
     public static void Remember(SerializedFile f, long pathId, NObject o) => loaded[(f, pathId)] = o;
 

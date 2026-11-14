@@ -2,6 +2,7 @@
 // from an asset file. Objects are created first, then filled (they reference each other).
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using FF9Engine.Core;
 using UnityEngine;
@@ -14,6 +15,8 @@ public static class SceneLoader {
         var f = index == 0 ? AssetDB.Main : AssetDB.File("level" + (index - 1)) ?? throw new System.IO.FileNotFoundException("level" + (index - 1));
         var b = new SceneBuilder(f, scene, false);
         b.BuildAll();
+        if (System.Environment.GetEnvironmentVariable("FF9_TRACE_SCENE") != null)
+            Log.Info($"scene file {f.Name}: {f.ObjectList.Count} objects, {f.ObjectList.Count(o => o.ClassId == ClassIds.GameObject)} game objects, {b.Behaviours.Count} behaviours");
         return b.Behaviours;
     }
 }

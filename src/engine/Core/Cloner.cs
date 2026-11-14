@@ -119,6 +119,7 @@ public static class Cloner {
         var copy = (NObject)CloneRecord(n);
         copy.Name = n.Name + "(Clone)";
         copy.IsAsset = false;
+        copy.ForgetGpu();
         var m = (UObject)RuntimeHelpers.GetUninitializedObject(n.Managed!.GetType());
         Registry.Add(copy, m);
         if (n is NAsset a && a.Data is ICloneable c) ((NAsset)copy).Data = c.Clone();

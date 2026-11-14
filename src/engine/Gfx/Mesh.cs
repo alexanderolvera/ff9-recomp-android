@@ -33,6 +33,15 @@ public sealed class NMesh : NObject, ICloneable {
     public int Stride;
     public bool Dynamic;
 
+    public override void FreeGpu() {
+        GL.DeleteBuffer(Vbo);
+        foreach (var b in Ibo) GL.DeleteBuffer(b);
+        GL.DeleteVertexArray(Vao);
+        Vbo = Vao = 0; Ibo = Array.Empty<uint>(); Dirty = true;
+    }
+
+    public override void ForgetGpu() { Vbo = Vao = 0; Ibo = Array.Empty<uint>(); Dirty = true; }
+
     public object Clone() {
         var m = (NMesh)MemberwiseClone();
         m.Vbo = 0; m.Vao = 0; m.Ibo = Array.Empty<uint>(); m.Dirty = true;
@@ -62,8 +71,11 @@ public sealed class NMesh : NObject, ICloneable {
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     struct GpuVertex { public Vector3 P, N; public Color32 C; public Vector2 T0, T1; public Vector4 Tan; public float Pad; }   // 64 bytes
 
+    static readonly bool traceVao = Environment.GetEnvironmentVariable("FF9_TRACE_VAO") != null;
+
     public unsafe void Upload(Vector3[]? skinnedPos = null, Vector3[]? skinnedNormals = null) {
         if (!Dirty && skinnedPos == null && Vbo != 0) return;
+        if (Vao == 0 && traceVao) Log.Info($"new VAO f{Core.Clock.Frame}: {this} n={Vertices.Length} registered={Core.Registry.ById(Id) == this}");
         if (Vao == 0) Vao = GL.GenVertexArray();
         if (Vbo == 0) Vbo = GL.GenBuffer();
         GL.glBindVertexArray(Vao);
@@ -80,6 +92,7 @@ public sealed class NMesh : NObject, ICloneable {
             buf[i].T1 = UV2 != null && i < UV2.Length ? UV2[i] : default;
             buf[i].Tan = Tangents != null && i < Tangents.Length ? Tangents[i] : default;
         }
+        Core.GpuStats.VboUploads++;
         GL.glBindBuffer(GL.ARRAY_BUFFER, Vbo);
         fixed (GpuVertex* p = buf) GL.glBufferData(GL.ARRAY_BUFFER, n * VStride, p, Dynamic || skinnedPos != null ? GL.DYNAMIC_DRAW : GL.STATIC_DRAW);
         GL.glEnableVertexAttribArray(AttrPos); GL.glVertexAttribPointer(AttrPos, 3, GL.FLOAT, 0, VStride, 0);
@@ -89,6 +102,7 @@ public sealed class NMesh : NObject, ICloneable {
         GL.glEnableVertexAttribArray(AttrUV1); GL.glVertexAttribPointer(AttrUV1, 2, GL.FLOAT, 0, VStride, 36);
         GL.glEnableVertexAttribArray(AttrTangent); GL.glVertexAttribPointer(AttrTangent, 4, GL.FLOAT, 0, VStride, 44);
         if (Dirty || Ibo.Length != SubMeshes.Count) {
+            Core.GpuStats.IboUploads++;
             foreach (var b in Ibo) GL.DeleteBuffer(b);
             Ibo = new uint[SubMeshes.Count];
             for (int s = 0; s < SubMeshes.Count; s++) {

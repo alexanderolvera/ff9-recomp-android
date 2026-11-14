@@ -25,6 +25,13 @@ public class NTexture : NObject {
     public bool Linear;
     public bool External;              // a GL texture owned by a native plugin (movies)
 
+    public override void FreeGpu() {
+        if (!External) GL.DeleteTexture(GlTex);
+        GlTex = 0; Dirty = true;
+    }
+
+    public override void ForgetGpu() { GlTex = 0; Dirty = true; External = false; }
+
     public virtual uint Bind() {
         if (External) return GlTex;
         if (GlTex == 0 || Dirty) Upload();
@@ -38,6 +45,7 @@ public class NTexture : NObject {
         if (dumpTex != null && Pixels != null && Name.Contains(dumpTex))
             Png.Write($"/data/local/tmp/ff9/shots/tex_{Name.Replace('/', '_')}_{Format}.png", Pixels, Width, Height, flipY: true);
         if (GlTex == 0) GlTex = GL.GenTexture();
+        Core.GpuStats.TexUploads++; Core.GpuStats.LastTex = Name;
         GL.glBindTexture(GL.TEXTURE_2D, GlTex);
         GL.glPixelStorei(GL.UNPACK_ALIGNMENT, 1);
         if (Pixels != null) fixed (byte* p = Pixels) GL.glTexImage2D(GL.TEXTURE_2D, 0, (int)GL.RGBA8, Width, Height, 0, GL.RGBA, GL.UNSIGNED_BYTE, p);
@@ -327,6 +335,7 @@ public sealed class NRenderTexture : NTexture {
         if (Created) return true;
         if (!Device.Ready) return false;
         GlTex = GL.GenTexture();
+        Core.GpuStats.RtCreates++;
         Pixels = null;
         Readable = false;
         Upload();
@@ -351,6 +360,9 @@ public sealed class NRenderTexture : NTexture {
         if (!Created) Create();
         return GlTex;
     }
+
+    public override void FreeGpu() => Release();
+    public override void ForgetGpu() { GlTex = Fbo = DepthRb = 0; Created = false; }
 
     public void Release() {
         if (!Created) return;

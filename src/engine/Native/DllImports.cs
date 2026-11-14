@@ -34,6 +34,8 @@ public static class DllImports {
     static IntPtr Resolve(string lib, Assembly asm, DllImportSearchPath? path) {
         string n = lib.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? lib[..^4] : lib;
         if (hostLibs.Contains(n)) return Host;
+        if (n == "libGLESv3.so" && Environment.GetEnvironmentVariable("FF9_GL_TRACE") != null) return Host;   // debug GL call counts
+        if (n == "libGLESv3.so" || n == "libEGL.so") return IntPtr.Zero;
         Log.Once("dll:" + lib, $"DllImport {lib} from {asm.GetName().Name}: no stand-in");
         return IntPtr.Zero;
     }

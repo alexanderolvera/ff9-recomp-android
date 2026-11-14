@@ -72,7 +72,9 @@ public static class Player {
             foreach (var f in sp[0].Split(',')) if (int.TryParse(f, out int fi)) shotFrames.Add(fi);
             if (sp.Length > 1) shotDir = sp[1];
         }
+        int noRenderFrom = int.TryParse(Environment.GetEnvironmentVariable("FF9_NO_RENDER_FROM"), out var nrf) ? nrf : int.MaxValue;
         Render = () => {
+            if (Clock.Frame >= noRenderFrom) { if (Environment.GetEnvironmentVariable("FF9_NO_SWAP") == null) Gfx.Device.Present(); return; }
             Gfx.Pipeline.RenderFrame();
             if (shotFrames.Contains(Clock.Frame)) Gfx.Device.Screenshot(System.IO.Path.Combine(shotDir, $"frame{Clock.Frame:D5}.png"));
             Gfx.Device.Present();
@@ -119,6 +121,7 @@ public static class Player {
         Render?.Invoke();
         Coroutines.Run(Coroutines.Phase.EndOfFrame);
         DebugDump.Tick();
+        if (memEvery > 0 && Clock.Frame % memEvery == 0) MemStat();
         Destroyer.Flush();
         while (levelRequests.Count > 0) {
             var r = levelRequests.Dequeue();
@@ -128,6 +131,44 @@ public static class Player {
     }
 
     static NMonoBehaviour[] Snapshot() => Behaviours.ToArray();
+
+    static readonly int memEvery = int.TryParse(Environment.GetEnvironmentVariable("FF9_MEMSTAT"), out var me) ? me : 0;
+
+    /// FF9_MEMSTAT=n: every n frames, managed heap, process memory and object counts.
+    static void MemStat() {
+        string rss = "?", vsz = "?";
+        int maps = 0;
+        try {
+            foreach (var l in System.IO.File.ReadAllLines("/proc/self/status")) {
+                if (l.StartsWith("VmRSS:")) rss = l.Substring(6).Trim();
+                else if (l.StartsWith("VmSize:")) vsz = l.Substring(7).Trim();
+            }
+            var ml = System.IO.File.ReadAllLines("/proc/self/maps");
+            maps = ml.Length;
+            if (Environment.GetEnvironmentVariable("FF9_MEMSTAT_MAPS") != null) {
+                var groups = new Dictionary<string, int>();
+                foreach (var l in ml) {
+                    var parts = l.Split(' ', 6, StringSplitOptions.RemoveEmptyEntries);
+                    string key = (parts.Length > 5 ? parts[5] : "[anon]") + " " + parts[1];
+                    groups[key] = groups.GetValueOrDefault(key) + 1;
+                }
+                foreach (var g in groups.OrderByDescending(g => g.Value).Take(6)) Log.Info($"   maps {g.Value} {g.Key}");
+                var sizes = new Dictionary<long, int>();
+                foreach (var l in ml) {
+                    if (!l.Contains("kgsl")) continue;
+                    var r = l.Split(' ')[0].Split('-');
+                    long sz = Convert.ToInt64(r[1], 16) - Convert.ToInt64(r[0], 16);
+                    sizes[sz] = sizes.GetValueOrDefault(sz) + 1;
+                }
+                Log.Info("   kgsl sizes: " + string.Join(", ", sizes.OrderByDescending(s => s.Value).Take(8).Select(s => $"{s.Key >> 10}K x{s.Value}")));
+            }
+        } catch { }
+        Log.Info($"gpu since last: vbo {GpuStats.VboUploads}, ibo {GpuStats.IboUploads}, tex {GpuStats.TexUploads} ({GpuStats.LastTex}), rt {GpuStats.RtCreates}, programs {Gfx.Pipeline.ProgramCount}");
+        GpuStats.VboUploads = GpuStats.IboUploads = GpuStats.TexUploads = GpuStats.RtCreates = 0;
+        if (System.Runtime.InteropServices.NativeLibrary.TryGetExport(Native.DllImports.Host, "ff9_gl_stats", out var glStats))
+            unsafe { ((delegate* unmanaged<void>)glStats)(); }
+        Log.Info($"mem f{Clock.Frame}: gc {GC.GetTotalMemory(false) >> 20} MB (gen0 {GC.CollectionCount(0)}, gen2 {GC.CollectionCount(2)}), rss {rss}, vsz {vsz}, maps {maps}, behaviours {Behaviours.Count}, objects {Registry.Count}");
+    }
 
     static bool Runs(NMonoBehaviour b) => b.Enabled && b.Managed != null && b.GameObject.ActiveInHierarchy && Registry.Get(b.Managed) == b;
 
@@ -254,4 +295,10 @@ public static class Destroyer {
                 break;
         }
     }
+}
+
+/// Counts of GPU uploads between memory reports.
+public static class GpuStats {
+    public static int VboUploads, IboUploads, TexUploads, RtCreates;
+    public static string LastTex = "";
 }

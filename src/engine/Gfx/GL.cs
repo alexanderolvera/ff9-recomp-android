@@ -82,6 +82,8 @@ public static unsafe class GL {
     [DllImport(L)] static extern void glGenVertexArrays(int n, uint* a);
     [DllImport(L)] public static extern void glBindVertexArray(uint a);
     public static uint GenVertexArray() { uint a; glGenVertexArrays(1, &a); return a; }
+    [DllImport(L)] static extern void glDeleteVertexArrays(int n, uint* a);
+    public static void DeleteVertexArray(uint a) { if (a != 0) glDeleteVertexArrays(1, &a); }
     [DllImport(L)] public static extern void glEnableVertexAttribArray(uint i);
     [DllImport(L)] public static extern void glDisableVertexAttribArray(uint i);
     [DllImport(L)] public static extern void glVertexAttribPointer(uint i, int size, uint type, byte norm, int stride, IntPtr offset);

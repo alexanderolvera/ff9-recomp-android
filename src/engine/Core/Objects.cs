@@ -25,6 +25,10 @@ public class NObject {
     public bool IsAsset;          // loaded from an asset file (not a scene object)
     public int ClassId;
     public override string ToString() => $"{GetType().Name}#{Id} '{Name}'";
+    /// Frees GL objects when the object is destroyed.
+    public virtual void FreeGpu() { }
+    /// Drops GL handles copied by a memberwise clone (the copy makes its own).
+    public virtual void ForgetGpu() { }
 }
 
 public sealed class NGameObject : NObject {
@@ -73,6 +77,11 @@ public static class Registry {
         get { for (int i = 2; i < next; i += 2) if (objs[i >> 1] is { } o) yield return o; }
     }
 
+    /// "live/ever" object counts, for memory reports
+    public static string Count {
+        get { int live = 0; for (int i = 2; i < next; i += 2) if (objs[i >> 1] != null) live++; return $"{live}/{next >> 1}"; }
+    }
+
     public static T Add<T>(T n, UObject? managed) where T : NObject {
         n.Id = next;
         next += 2;
@@ -105,6 +114,7 @@ public static class Registry {
     public static void Remove(NObject n) {
         if (n.Managed is { } m) Unsafe.As<ObjectLayout>(m).CachedPtr = IntPtr.Zero;
         objs[n.Id >> 1] = null;
+        if (Gfx.Device.Ready) n.FreeGpu();
     }
 
     /// The managed object for a record, created on demand for built-in classes.

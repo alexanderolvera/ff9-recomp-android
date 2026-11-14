@@ -201,9 +201,9 @@ static class Ildump {
                     if (m.RelativeVirtualAddress == 0) continue;
                     var il = pe.GetMethodBody(m.RelativeVirtualAddress).GetILBytes()!;
                     for (int i = 0; i + 4 < il.Length; i++) {
-                        if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73) continue;
+                        if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73 && il[i] != 0x7D) continue;
                         int tok = BitConverter.ToInt32(il, i + 1);
-                        if ((tok >> 24) is not (0x06 or 0x0A or 0x2B)) continue;
+                        if ((tok >> 24) is not (0x04 or 0x06 or 0x0A or 0x2B)) continue;
                         try {
                             if (MemberName(MetadataTokens.EntityHandle(tok)).Contains(a[2])) {
                                 Console.WriteLine($"{TypeName(md, th)}::{md.GetString(m.Name)}");

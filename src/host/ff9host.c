@@ -321,6 +321,13 @@ __attribute__((visibility("default"))) int ff9_main(int argc, char **argv) {
                           "System.Resources.UseSystemResourceKeys"};
     const char *vals[] = {tpa, native_dirs, "true", managed, "true"};
     double t0 = now();
+    /* FF9_MONO_OPTS="--optimize=-inline ...": Mono JIT options (debugging) */
+    if (getenv("FF9_MONO_OPTS")) {
+        static char buf[512]; char *opts[16]; int n = 0;
+        snprintf(buf, sizeof buf, "%s", getenv("FF9_MONO_OPTS"));
+        for (char *s = strtok(buf, " "); s && n < 16; s = strtok(NULL, " ")) opts[n++] = s;
+        mono_jit_parse_options(n, opts);
+    }
     int r = monovm_initialize(5, keys, vals);
     if (r) { printf("monovm_initialize failed %d\n", r); return 1; }
     g_domain = mono_jit_init_version("ff9", "v4.0.30319");

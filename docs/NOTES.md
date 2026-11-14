@@ -51,3 +51,15 @@
   objects are allocated below 2 GB, src/host/lowmem.cpp); .NET 8 rejects relative
   Assembly.LoadFile (detour in Compat.cs); Android .NET crypto needs a JVM (src/host/crypto.c).
 - Memoria.ini on the device: [Audio] Backend = 2 (SoLoud).
+
+## APK (M5)
+- `bash tools/build_apk.sh` -> `android/app/build/outputs/apk/release/app-release.apk`, signed with the
+  key in ~/.ff9recomp/keystore.properties (or FF7Recomp's). Contents: libff9.so, Mono's .so files,
+  assets/runtime.zip (.NET 8 class libraries + FF9Engine.dll). No game files.
+- On the device: Launcher -> Import game folder (SAF) copies the player's Memoria-installed FF9
+  folder to Android/data/com.ff9recomp/files/game (skips x86, *.exe, Mono, Plugins) and sets
+  [Audio] Backend = 2. The game runs in its own process (:game); log in files/ff9.log and logcat FF9.
+- UnityEngine's internal calls are enumerated at run time from the player's UnityEngine.dll and
+  bound to numbered thunks (tools/gen_thunks.py), so nothing game-derived is compiled in.
+- Moguri Mod (~5 GB) is installed with Memoria's Mod Manager on the PC before importing; Memoria
+  loads it from the game folder as on PC.

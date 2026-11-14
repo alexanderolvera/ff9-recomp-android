@@ -9,7 +9,30 @@ public static class DebugDump {
     static readonly int[] frames = (Environment.GetEnvironmentVariable("FF9_DUMP_FRAME") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToArray();
     static readonly string? goFilter = Environment.GetEnvironmentVariable("FF9_INSPECT_GO")?.Replace('_', ' ');
 
+    static readonly bool probe = Environment.GetEnvironmentVariable("FF9_PROBE") != null;
+
+    static void Try(string what, Func<object?> f) {
+        try { Console.WriteLine($"probe {what} = {f() ?? "null"}"); }
+        catch (Exception e) { Console.WriteLine($"probe {what} THROWS {e.GetType().Name}: {e.Message}"); }
+    }
+
+    /// FF9_PROBE: evaluates the calls FieldMapActorController.MovePC makes, one by one.
+    static void Probe() {
+        Try("Field", () => FF9StateSystem.Field);
+        Try("Field.isDebug", () => FF9StateSystem.Field.isDebug);
+        Try("IsMovementControl", () => EventInput.IsMovementControl);
+        Try("HonoInputManager", () => PersistenSingleton<HonoInputManager>.Instance);
+        Try("GetAxis", () => PersistenSingleton<HonoInputManager>.Instance.GetAxis());
+        Try("UIManager.Input", () => UIManager.Input);
+        Try("XInputManager", () => PersistenSingleton<UnityXInput.XInputManager>.Instance);
+        Try("CurrentState", () => { var x = PersistenSingleton<UnityXInput.XInputManager>.Instance; var st = x.GetType().GetProperty("CurrentState")!.GetValue(x)!; var dp = st.GetType().GetProperty("DPad")!.GetValue(st)!; return dp.GetType().GetProperty("Down")!.GetValue(dp); });
+        Try("GetKey", () => { var inp = UIManager.Input; var m = inp.GetType().GetMethod("GetKey")!; return m.Invoke(inp, new[] { Enum.ToObject(m.GetParameters()[0].ParameterType, 0) }); });
+        Try("EventEngine", () => PersistenSingleton<EventEngine>.Instance);
+        Try("GetUserControl", () => PersistenSingleton<EventEngine>.Instance.GetUserControl());
+    }
+
     public static void Tick() {
+        if (probe && Clock.Frame % 500 == 250) Probe();
         if (!frames.Contains(Clock.Frame)) return;
         Console.WriteLine($"==== frame {Clock.Frame} t={Clock.Now:F2}");
         if (goFilter != null) {

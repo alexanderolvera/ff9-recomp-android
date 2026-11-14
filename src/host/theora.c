@@ -113,6 +113,7 @@ EXPORT BOOL OpenStream(Movie *m, const char *path, int offset, int size, BOOL po
 
 static void upload(Movie *m) {
     if (!m->haveFrame || m->uploadedFrame) return;
+    if (getenv("FF9_NO_MOVIE_UPLOAD")) { m->uploadedFrame = 1; m->uploadedTime = m->decodedTime; return; }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     for (int i = 0; i < 3; i++) {
         glBindTexture(GL_TEXTURE_2D, m->tex[i]);
