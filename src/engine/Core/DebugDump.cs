@@ -142,7 +142,34 @@ public static class DebugDump {
         Console.WriteLine($"nametest after GC: {bad} bad");
     }
 
+    // FF9_WARP_WORLD=frame:wldMapNo (tests): at that frame in a field, switch to the world map the way
+    // the field's own loop does (nextMode 3 + a scene-change flag)
+    static readonly string? warpWorld = Environment.GetEnvironmentVariable("FF9_WARP_WORLD");
+
+    static void WarpWorld() {
+        const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+        object? Get(object? o, string n) => o == null ? null : (o.GetType().GetField(n, F)?.GetValue(o) ?? o.GetType().GetProperty(n, F)?.GetValue(o));
+        void Set(object? o, string n, object v) {
+            if (o == null) return;
+            var f = o.GetType().GetField(n, F);
+            if (f != null) { f.SetValue(o, Convert.ChangeType(v, f.FieldType)); return; }
+            var pr = o.GetType().GetProperty(n, F);
+            if (pr != null && pr.CanWrite) pr.SetValue(o, Convert.ChangeType(v, pr.PropertyType));
+        }
+        var parts = warpWorld!.Split(':');
+        object? ff9 = typeof(FF9StateSystem).GetProperty("Common")?.GetValue(null);
+        ff9 = Get(ff9, "FF9");
+        object? field = Get(Get(Get(typeof(FF9StateSystem).GetProperty("Field")?.GetValue(null), "FF9Field"), "loc"), "map");
+        if (parts.Length > 1) Set(ff9, "wldMapNo", short.Parse(parts[1]));
+        Set(field, "nextMode", 3);
+        var sys = typeof(PersistenSingleton<>).MakeGenericType(typeof(FF9StateSystem)).GetProperty("Instance")?.GetValue(null);
+        Set(sys, "attr", Convert.ToUInt32(Get(sys, "attr")) | 1u);
+        Console.WriteLine($"warp: world map {Get(ff9, "wldMapNo")}, field nextMode {Get(field, "nextMode")}");
+    }
+
     public static void Tick() {
+        if (warpWorld != null && int.TryParse(warpWorld.Split(':')[0], out int wf) && Clock.Frame == wf)
+            try { WarpWorld(); } catch (Exception e) { Console.WriteLine("warp failed: " + e); }
         if (Clock.Frame == nameTestAt) NameTest();
         if (probeBattle && Clock.Frame % 5 == 0) ProbeBattle();
         if (probe && (Clock.Frame % 500 == 250 || Clock.Frame == probeAt)) Probe();

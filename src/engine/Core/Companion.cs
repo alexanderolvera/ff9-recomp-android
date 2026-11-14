@@ -59,7 +59,12 @@ public static class Companion {
         b.Append("\"ready\":").Append(ready ? 1 : 0).Append(",\"mode\":"); Str(b, m);
         if (ff9 != null) {
             b.Append(",\"gil\":").Append(L(Get(party, "gil")));
-            b.Append(",\"loc\":"); Str(b, Get(ff9, "mapNameStr") as string ?? "");
+            string loc = Get(ff9, "mapNameStr") as string ?? "";
+            if (mode == 3) {
+                // on the world map: the region's name, as Memoria's window title shows it
+                try { loc = Type.GetType("ff9, Assembly-CSharp")?.GetMethod("w_worldLocationName", F)?.Invoke(null, null) as string ?? ""; } catch { loc = ""; }
+            }
+            b.Append(",\"loc\":"); Str(b, loc);
             b.Append(",\"map\":").Append(L(Get(ff9, "fldMapNo")));
         }
         // a movie playing (MBG): the panels dim

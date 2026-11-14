@@ -249,6 +249,32 @@ public static class Dxt {
             }
     }
 
+    /// DXT3: explicit 4-bit alpha per pixel, then a DXT1 colour block (always 4 colours).
+    public static void DecodeDxt3(byte[] d, int off, int w, int h, byte[] o) {
+        int bw = (w + 3) / 4, bh = (h + 3) / 4;
+        Span<byte> col = stackalloc byte[16];
+        int p = off;
+        for (int by = 0; by < bh; by++)
+            for (int bx = 0; bx < bw; bx++) {
+                ulong abits = 0;
+                for (int i = 0; i < 8; i++) abits |= (ulong)d[p + i] << (8 * i);
+                p += 8;
+                int c0 = d[p] | d[p + 1] << 8, c1 = d[p + 2] | d[p + 3] << 8;
+                uint bits = (uint)(d[p + 4] | d[p + 5] << 8 | d[p + 6] << 16 | d[p + 7] << 24);
+                p += 8;
+                Rgb(c0, col, 0); Rgb(c1, col, 4);
+                for (int k = 0; k < 3; k++) { col[8 + k] = (byte)((2 * col[k] + col[4 + k]) / 3); col[12 + k] = (byte)((col[k] + 2 * col[4 + k]) / 3); }
+                for (int py = 0; py < 4; py++)
+                    for (int px = 0; px < 4; px++) {
+                        int x = bx * 4 + px, y = by * 4 + py;
+                        if (x >= w || y >= h) continue;
+                        int i = py * 4 + px, ci = (int)(bits >> (2 * i) & 3), q = (y * w + x) * 4;
+                        o[q] = col[ci * 4]; o[q + 1] = col[ci * 4 + 1]; o[q + 2] = col[ci * 4 + 2];
+                        o[q + 3] = (byte)((abits >> (4 * i) & 15) * 17);
+                    }
+            }
+    }
+
     static void Rgb(int c, Span<byte> o, int at) {
         o[at] = (byte)((c >> 11 & 31) * 255 / 31); o[at + 1] = (byte)((c >> 5 & 63) * 255 / 63); o[at + 2] = (byte)((c & 31) * 255 / 31); o[at + 3] = 255;
     }
@@ -266,6 +292,20 @@ public static class Dds {
         if ((pfFlags & 4) != 0 && (four == "DXT1" || four == "DXT5")) {
             Dxt.Decode(f, off, w, h, four == "DXT5", o);
             return o;
+        }
+        if ((pfFlags & 4) != 0 && four == "DXT3") {
+            Dxt.DecodeDxt3(f, off, w, h, o);
+            return o;
+        }
+        if ((pfFlags & 4) != 0 && four == "DX10") {
+            // DX10 header (20 bytes more): BC1/BC2/BC3 by DXGI format; BC7 (98/99) is not decoded yet
+            int dxgi = BitConverter.ToInt32(f, 128);
+            off = 148;
+            if (dxgi is 71 or 72) { Dxt.Decode(f, off, w, h, false, o); return o; }
+            if (dxgi is 74 or 75) { Dxt.DecodeDxt3(f, off, w, h, o); return o; }
+            if (dxgi is 77 or 78) { Dxt.Decode(f, off, w, h, true, o); return o; }
+            Log.Once("dds-dxgi" + dxgi, $"DDS DXGI format {dxgi} not supported (98/99: BC7)");
+            return null;
         }
         if ((pfFlags & 0x40) != 0 && bits == 32) {
             uint rm = BitConverter.ToUInt32(f, 92), gm = BitConverter.ToUInt32(f, 96), bm = BitConverter.ToUInt32(f, 100), am = BitConverter.ToUInt32(f, 104);

@@ -74,7 +74,8 @@ public class CompanionView extends View {
         boolean battle = "battle".equals(mode);
 
         // header: where the party is, gil
-        String where = "world".equals(mode) ? "World map" : clean(state.optString("loc"));
+        String loc = clean(state.optString("loc"));
+        String where = "world".equals(mode) ? (loc.isEmpty() ? "World map" : "World map · " + loc) : loc;
         text.setTypeface(serifBold);
         label(c, where.isEmpty() ? " " : where, pad, pad + 44 * u, 40 * u, TEXT, Paint.Align.LEFT);
         text.setTypeface(serif);
