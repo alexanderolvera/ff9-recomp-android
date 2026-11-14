@@ -67,12 +67,47 @@ final class GameInstall {
     // ---------------------------------------------------------------- import from a folder
     void importFrom(Uri tree, Progress p) throws IOException {
         ContentResolver cr = ctx.getContentResolver();
-        String rootId = DocumentsContract.getTreeDocumentId(tree);
+        // the game may be anywhere below the picked folder (Steam's common/, a copy in Downloads,
+        // a folder named differently): find the one that holds StreamingAssets and x64
+        p.update("Looking for FINAL FANTASY IX in the picked folder...");
+        String rootId = findGameRoot(cr, tree, DocumentsContract.getTreeDocumentId(tree), 0);
+        if (rootId == null)
+            throw new IOException("this folder doesn't hold FINAL FANTASY IX (no StreamingAssets and x64 folders found in it or below it). "
+                    + "Pick the game's folder, the one with FF9_Launcher.exe in it.");
         game.mkdirs();
         long[] count = {0, 0};
         copyTree(cr, tree, rootId, game, "", p, count);
         configureMemoria();
         p.update("Imported " + count[0] + " files (" + (count[1] >> 20) + " MB).");
+    }
+
+    /** The document id of the folder (this one or up to 3 levels below) holding StreamingAssets and x64, or null. */
+    private String findGameRoot(ContentResolver cr, Uri tree, String docId, int depth) {
+        List<String[]> dirs = new ArrayList<>();
+        boolean sa = false, x64 = false;
+        try (Cursor c = cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), new String[] {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE }, null, null, null)) {
+            if (c == null) return null;
+            while (c.moveToNext()) {
+                if (!DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2))) continue;
+                String name = c.getString(1);
+                if (name.equalsIgnoreCase("StreamingAssets")) sa = true;
+                else if (name.equalsIgnoreCase("x64")) x64 = true;
+                else dirs.add(new String[] { c.getString(0), name });
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        if (sa && x64) return docId;
+        if (depth >= 3) return null;
+        // likely names first (the Steam folder's own name), then the rest
+        dirs.sort((a, b) -> Boolean.compare(!a[1].toLowerCase().contains("fantasy"), !b[1].toLowerCase().contains("fantasy")));
+        for (String[] d : dirs) {
+            String r = findGameRoot(cr, tree, d[0], depth + 1);
+            if (r != null) return r;
+        }
+        return null;
     }
 
     private void copyTree(ContentResolver cr, Uri tree, String docId, File dst, String rel, Progress p, long[] count) throws IOException {
@@ -113,7 +148,8 @@ final class GameInstall {
     void configureMemoria() throws IOException {
         File ini = new File(game, "Memoria.ini");
         if (!ini.isFile()) return;
-        String s = new String(Files.readAllBytes(ini.toPath()), StandardCharsets.UTF_8);
+        // byte for byte: the file is not valid UTF-8, and a UTF-8 round trip would damage it
+        String s = new String(Files.readAllBytes(ini.toPath()), StandardCharsets.ISO_8859_1);
         s = s.replaceAll("(?m)^Backend\\s*=\\s*\\d+", "Backend = 2");
         // a Moguri Mod folder copied in but not enabled: enable it as Memoria's mod manager does
         String moguri = moguriFolder();
@@ -121,7 +157,7 @@ final class GameInstall {
             s = s.replaceFirst("(?m)^FolderNames\\s*=\\s*$", "FolderNames = \"" + moguri + "\"");
             s = s.replaceFirst("(?m)^TileSize\\s*=\\s*32\\s*$", "TileSize = 64");
         }
-        Files.write(ini.toPath(), s.getBytes(StandardCharsets.UTF_8));
+        Files.write(ini.toPath(), s.getBytes(StandardCharsets.ISO_8859_1));
     }
 
     // ---------------------------------------------------------------- runtime from the APK

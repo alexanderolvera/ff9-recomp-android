@@ -187,6 +187,8 @@ public class LauncherActivity extends Activity {
             v.setOnClickListener(x -> change(v, 1));
             if (first == null) first = v;
         }
+        item("Arrange touch controls", "Drag the on-screen buttons where you want them; set their size and opacity.",
+                () -> startActivity(new Intent(this, TouchLayoutActivity.class)));
         status.setText("Left/right or A to change. B to go back. Applied when the game starts.");
         if (first != null) first.requestFocus();
     }

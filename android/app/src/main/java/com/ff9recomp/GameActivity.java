@@ -42,6 +42,16 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         SurfaceView v = new SurfaceView(this);
         v.getHolder().addCallback(this);
         root.addView(v);
+        // the on-screen pad (Settings > Touch controls: Auto shows it when no controller is connected)
+        android.content.SharedPreferences prefs = getSharedPreferences("launcher", MODE_PRIVATE);
+        touchMode = prefs.getInt("touch_controls", 0);
+        if (touchMode != 2) {
+            touch = new TouchControls(this, (tb, tl, tr) -> { touchButtons = tb; touchLt = tl; touchRt = tr; send(); });
+            touch.setLayout(prefs.getString("touch_layout", ""));
+            root.addView(touch, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            ((android.hardware.input.InputManager) getSystemService(INPUT_SERVICE)).registerInputDeviceListener(deviceListener, null);
+        }
+        updateTouch();
         setContentView(root);
         hideSystemUi();
         android.content.IntentFilter padFilter = new android.content.IntentFilter("com.ff9recomp.test.PAD");
@@ -50,6 +60,35 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         else
             registerReceiver(testPad, padFilter, android.Manifest.permission.DUMP, null);
     }
+
+    // ---- touch controls and controller detection
+    private TouchControls touch;
+    private int touchMode, touchButtons, touchLt, touchRt;
+
+    private static boolean isGamepad(InputDevice d) {
+        if (d == null || d.isVirtual()) return false;
+        int src = d.getSources();
+        return (src & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD || (src & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+    }
+
+    private static boolean gamepadConnected() {
+        for (int id : InputDevice.getDeviceIds()) if (isGamepad(InputDevice.getDevice(id))) return true;
+        return false;
+    }
+
+    private void updateTouch() {
+        if (touch == null) return;
+        boolean show = touchMode == 1 || (touchMode == 0 && !gamepadConnected());
+        touch.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (!show && (touchButtons | touchLt | touchRt) != 0) { touchButtons = touchLt = touchRt = 0; send(); }
+    }
+
+    private final android.hardware.input.InputManager.InputDeviceListener deviceListener =
+            new android.hardware.input.InputManager.InputDeviceListener() {
+        @Override public void onInputDeviceAdded(int id) { updateTouch(); }
+        @Override public void onInputDeviceRemoved(int id) { updateTouch(); }
+        @Override public void onInputDeviceChanged(int id) { updateTouch(); }
+    };
 
     @Override
     protected void onDestroy() {
@@ -140,11 +179,33 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         return 0;
     }
 
+    // ---- a physical keyboard: arrows/WASD move, Enter/Space confirm, Esc/Backspace cancel,
+    // Tab = menu, Q/E = L1/R1, Shift = the fourth button, Backslash = Select, P = Start
+    private int keyButtons;
+
+    private static int keyboardBit(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_W: return UP;
+            case KeyEvent.KEYCODE_DPAD_DOWN: case KeyEvent.KEYCODE_S: return DOWN;
+            case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_A: return LEFT;
+            case KeyEvent.KEYCODE_DPAD_RIGHT: case KeyEvent.KEYCODE_D: return RIGHT;
+            case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_SPACE: case KeyEvent.KEYCODE_NUMPAD_ENTER: return A;
+            case KeyEvent.KEYCODE_ESCAPE: case KeyEvent.KEYCODE_DEL: return B;
+            case KeyEvent.KEYCODE_TAB: return Y;
+            case KeyEvent.KEYCODE_SHIFT_LEFT: case KeyEvent.KEYCODE_SHIFT_RIGHT: return X;
+            case KeyEvent.KEYCODE_Q: return LB;
+            case KeyEvent.KEYCODE_E: return RB;
+            case KeyEvent.KEYCODE_BACKSLASH: return BACK;
+            case KeyEvent.KEYCODE_P: return START;
+        }
+        return 0;
+    }
+
     private void send() {
-        int all = buttons | dpad | testButtons;
+        int all = buttons | dpad | testButtons | keyButtons | touchButtons;
         // Select+Start together is ours (leave the game): the game sees neither while both are held
         int toGame = (all & (START | BACK)) == (START | BACK) ? all & ~(START | BACK) : all;
-        nativePad(toGame, lt, rt, lx, ly, rx, ry);
+        nativePad(toGame, Math.max(lt, touchLt), Math.max(rt, touchRt), lx, ly, rx, ry);
         // Select+Start held for a second: the leave-the-game dialog
         boolean combo = (all & (START | BACK)) == (START | BACK);
         if (combo != quitHeld) {
@@ -222,6 +283,14 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     public boolean dispatchKeyEvent(KeyEvent e) {
         if (failed) {
             if (e.getAction() == KeyEvent.ACTION_UP && (e.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B || e.getKeyCode() == KeyEvent.KEYCODE_BACK)) finish();
+            return true;
+        }
+        InputDevice dev = e.getDevice();
+        if (dev != null && !dev.isVirtual() && !isGamepad(dev) && dev.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
+            int kb = keyboardBit(e.getKeyCode());
+            if (kb == 0) return super.dispatchKeyEvent(e);
+            if (e.getAction() == KeyEvent.ACTION_DOWN) keyButtons |= kb; else if (e.getAction() == KeyEvent.ACTION_UP) keyButtons &= ~kb;
+            send();
             return true;
         }
         int b = bit(e.getKeyCode());
