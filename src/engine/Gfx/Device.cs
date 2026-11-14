@@ -12,7 +12,10 @@ public static unsafe class Device {
     public static bool Ready;
     public static IntPtr NativeWindow;      // set by the APK before Init
 
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern IntPtr ff9_get_native_window();
+
     public static void Init() {
+        if (NativeWindow == IntPtr.Zero) NativeWindow = ff9_get_native_window();
         Display = EGL.eglGetDisplay(IntPtr.Zero);
         int maj, min;
         if (EGL.eglInitialize(Display, &maj, &min) == 0) throw new Exception("eglInitialize failed " + EGL.eglGetError());

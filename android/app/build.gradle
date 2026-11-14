@@ -1,0 +1,48 @@
+plugins { id 'com.android.application' }
+
+// The APK carries no game code or data: the host (libff9.so), .NET 8's Mono runtime and class
+// libraries, FF9Engine.dll, SoLoud and FFmpeg. The game (with Memoria, and Moguri if installed)
+// is imported on the device from the player's own copy. tools/build_apk.sh stages
+// build/apk/{jni,assets} before Gradle runs.
+android {
+    namespace 'com.ff9recomp'
+    compileSdk 35
+    ndkVersion '28.2.13676358'
+    defaultConfig {
+        applicationId 'com.ff9recomp'
+        minSdk 30
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    // Release signing: the key stays off the repository (~/.ff9recomp/keystore.properties, or
+    // FF7Recomp's ~/.ff7recomp/keystore.properties, or the file named by FF9_KEYSTORE_PROPERTIES).
+    def home = System.getProperty('user.home')
+    def ksFile = file(System.getenv('FF9_KEYSTORE_PROPERTIES') ?: (new File("${home}/.ff9recomp/keystore.properties").isFile()
+            ? "${home}/.ff9recomp/keystore.properties" : "${home}/.ff7recomp/keystore.properties"))
+    def ks = new Properties()
+    if (ksFile.isFile()) ksFile.withInputStream { ks.load(it) }
+    signingConfigs {
+        if (ks['storeFile']) {
+            release {
+                storeFile file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ks['storeFile']) signingConfig signingConfigs.release
+        }
+    }
+    sourceSets { main {
+        assets.srcDirs += ["${rootDir}/../build/apk/assets"]
+        jniLibs.srcDirs += ["${rootDir}/../build/apk/jni"]
+    } }
+    packaging { jniLibs { useLegacyPackaging true } }
+    androidResources { noCompress += ['zip'] }
+}

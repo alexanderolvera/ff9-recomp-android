@@ -8,3 +8,8 @@
 *.apk
 *.aab
 __pycache__/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/.cxx/

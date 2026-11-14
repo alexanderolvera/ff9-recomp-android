@@ -37,9 +37,15 @@ void mono_threads_exit_gc_unsafe_region(void *cookie, void **stackdata);
 void mono_add_internal_call_with_flags(const char *name, const void *method, int cooperative);
 #define ICALL(name, fn) mono_add_internal_call_with_flags(name, (const void *)(fn), 1)
 
-extern const int ue_icall_count;
-extern const char *const ue_icall_names[];
-extern const void *const ue_icall_fns[];
+/* UnityEngine's internal calls, found at run time in the game's UnityEngine.dll (the APK carries
+   no game-derived tables): each gets a numbered thunk (out/host/ue_thunks.S, tools/gen_thunks.py)
+   that jumps through ue_icall_table[i]; the table starts with "missing" stubs, FF9Engine fills it. */
+extern const int ue_thunk_count;
+extern __attribute__((visibility("hidden"))) const void *ue_icall_table[];
+extern const void *const ue_thunks[];
+static char **ue_icall_names;
+static int ue_icall_count;
+static int *ue_sorted;
 
 static MonoDomain *g_domain;
 
@@ -205,25 +211,46 @@ static int cmd_run(const char *type, const char *method) {
 }
 
 /* ---- FF9Engine.dll: the engine's internal calls are managed methods ---- */
-/* UnityEngine internal calls are registered as thunks that jump through ue_icall_table: the
-   engine fills the table slot. Anything else (e.g. System.* overrides) goes to Mono directly. */
-extern const void *ue_icall_table[];
-static void add_icall(const char *name, const void *fn) {
-    static int sorted_n = 0;
-    static int *order = NULL;
-    if (!order) {   /* index of names, for bsearch */
-        order = malloc(sizeof(int) * ue_icall_count);
-        for (int i = 0; i < ue_icall_count; i++) order[i] = i;
-        for (int i = 1; i < ue_icall_count; i++)       /* insertion sort, once */
-            for (int j = i; j > 0 && strcmp(ue_icall_names[order[j - 1]], ue_icall_names[order[j]]) > 0; j--) {
-                int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
-            }
-        sorted_n = ue_icall_count;
+/* UnityEngine internal calls: thunks jump through ue_icall_table; the engine fills the slot.
+   Anything else (e.g. System.* overrides) goes to Mono directly. */
+static int cmp_name(const void *a, const void *b) { return strcmp(ue_icall_names[*(const int *)a], ue_icall_names[*(const int *)b]); }
+
+static void register_unity_icalls(void) {
+    MonoAssemblyName *an = mono_assembly_name_new("UnityEngine");
+    MonoImageOpenStatus st;
+    MonoAssembly *a = mono_assembly_load(an, NULL, &st);
+    if (!a) { printf("UnityEngine.dll: load failed (%d)\n", st); return; }
+    MonoImage *img = mono_assembly_get_image(a);
+    int rows = mono_image_get_table_rows(img, MONO_TABLE_METHOD);
+    ue_icall_names = calloc(ue_thunk_count, sizeof(char *));
+    for (int i = 1; i <= rows; i++) {
+        MonoMethod *m = mono_get_method(img, 0x06000000 | i, NULL);
+        if (!m) continue;
+        uint32_t iflags = 0;
+        mono_method_get_flags(m, &iflags);
+        if (!(iflags & 0x1000)) continue;                     /* METHOD_IMPL_ATTRIBUTE_INTERNAL_CALL */
+        char *cls = mono_type_get_name_full(mono_class_get_type(mono_method_get_class(m)), MONO_TYPE_NAME_FORMAT_IL);
+        char name[512];
+        snprintf(name, sizeof name, "%s::%s", cls, mono_method_get_name(m));
+        mono_free(cls);
+        int dup = 0;
+        for (int k = 0; k < ue_icall_count; k++) if (!strcmp(ue_icall_names[k], name)) { dup = 1; break; }
+        if (dup) continue;
+        if (ue_icall_count >= ue_thunk_count) { printf("too many internal calls (raise tools/gen_thunks.py N)\n"); break; }
+        ue_icall_names[ue_icall_count] = strdup(name);
+        ICALL(name, ue_thunks[ue_icall_count]);
+        ue_icall_count++;
     }
-    int lo = 0, hi = sorted_n - 1;
+    ue_sorted = malloc(sizeof(int) * ue_icall_count);
+    for (int i = 0; i < ue_icall_count; i++) ue_sorted[i] = i;
+    qsort(ue_sorted, ue_icall_count, sizeof(int), cmp_name);
+}
+
+static void add_icall(const char *name, const void *fn) {
+    int lo = 0, hi = ue_icall_count - 1;
     while (lo <= hi) {
-        int mid = (lo + hi) / 2, c = strcmp(name, ue_icall_names[order[mid]]);
-        if (!c) { ue_icall_table[order[mid]] = fn; return; }
+        int mid = (lo + hi) / 2, c = strcmp(name, ue_icall_names[ue_sorted[mid]]);
+        if (!c) { ue_icall_table[ue_sorted[mid]] = fn; return; }
         if (c < 0) hi = mid - 1; else lo = mid + 1;
     }
     ICALL(name, fn);
@@ -263,15 +290,26 @@ static int cmd_play(void) {
     return *(int *)mono_object_unbox(r);
 }
 
-int main(int argc, char **argv) {
+/* the APK's GameActivity sets this from its Surface (src/host/android_jni.c); FF9Engine's Device
+   creates the EGL window surface on it. NULL in the headless host: off-screen pbuffer. */
+__attribute__((visibility("default"))) void *ff9_native_window;
+__attribute__((visibility("default"))) void *ff9_get_native_window(void) { return ff9_native_window; }
+
+__attribute__((visibility("default"))) int ff9_main(int argc, char **argv) {
     if (argc < 3) { fprintf(stderr, "usage: ff9host <dir> jit | run <Type> <Method>\n"); return 64; }
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *dir = argv[1];
-    char bcl[1024], managed[1024];
+    /* layout: <dir>/{bcl,managed,engine,game} (headless host); the APK points each at its own
+       place with FF9_BCL, FF9_NATIVE, FF9_MANAGED, FF9_ENGINE and FF9_GAME */
+    char bcl[1024], managed[1024], native_dirs[1024];
     snprintf(bcl, sizeof bcl, "%s/bcl", dir);
     char engine_dir[1024];
     snprintf(managed, sizeof managed, "%s/managed", dir);
     snprintf(engine_dir, sizeof engine_dir, "%s/engine", dir);
+    if (getenv("FF9_BCL")) snprintf(bcl, sizeof bcl, "%s", getenv("FF9_BCL"));
+    if (getenv("FF9_MANAGED")) snprintf(managed, sizeof managed, "%s", getenv("FF9_MANAGED"));
+    if (getenv("FF9_ENGINE")) snprintf(engine_dir, sizeof engine_dir, "%s", getenv("FF9_ENGINE"));
+    snprintf(native_dirs, sizeof native_dirs, "%s", getenv("FF9_NATIVE") ? getenv("FF9_NATIVE") : bcl);
     /* the game's own mscorlib/System/System.Core are Unity's .NET 3.5 profile: .NET 8's facades replace them */
     static const char *const skip_game[] = {"mscorlib.dll", "System.dll", "System.Core.dll",
                                             "System.Runtime.Serialization.dll", NULL};
@@ -281,20 +319,20 @@ int main(int argc, char **argv) {
     const char *keys[] = {"TRUSTED_PLATFORM_ASSEMBLIES", "NATIVE_DLL_SEARCH_DIRECTORIES",
                           "System.Globalization.Invariant", "APP_CONTEXT_BASE_DIRECTORY",
                           "System.Resources.UseSystemResourceKeys"};
-    const char *vals[] = {tpa, bcl, "true", managed, "true"};
+    const char *vals[] = {tpa, native_dirs, "true", managed, "true"};
     double t0 = now();
     int r = monovm_initialize(5, keys, vals);
     if (r) { printf("monovm_initialize failed %d\n", r); return 1; }
     g_domain = mono_jit_init_version("ff9", "v4.0.30319");
     if (!g_domain) { printf("mono_jit_init failed\n"); return 1; }
     mono_install_unhandled_exception_hook(unhandled, NULL);
-    for (int i = 0; i < ue_icall_count; i++)
-        ICALL(ue_icall_names[i], ue_icall_fns[i]);
+    register_unity_icalls();
     printf("mono up in %.2f s, %d UnityEngine internal calls registered as stubs\n", now() - t0, ue_icall_count);
 
     /* the game runs from its root folder (Memoria reads Memoria.ini, StreamingAssets/... relative) */
     char root[1024];
     snprintf(root, sizeof root, "%s/game", dir);
+    if (getenv("FF9_GAME")) snprintf(root, sizeof root, "%s", getenv("FF9_GAME"));
     if (chdir(root)) { printf("no game folder %s\n", root); return 1; }
     void *stackdata[4];
     mono_threads_enter_gc_unsafe_region(stackdata);
@@ -308,3 +346,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "unknown command\n");
     return 64;
 }
+
+#ifndef FF9_LIBRARY
+int main(int argc, char **argv) { return ff9_main(argc, argv); }
+#endif

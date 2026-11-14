@@ -19,6 +19,7 @@ public static class DllImports {
             try { NativeLibrary.SetDllImportResolver(Assembly.Load(name), Resolve); }
             catch (Exception e) { Log.Warn($"DllImport resolver for {name}: {e.Message}"); }
         }
+        NativeLibrary.SetDllImportResolver(typeof(DllImports).Assembly, Resolve);   // FF9Engine's own "__Internal" calls
         // .NET's Android crypto backend needs a JVM; the host implements the parts the game uses
         NativeLibrary.SetDllImportResolver(typeof(System.Security.Cryptography.Aes).Assembly, Resolve);
         AppDomain.CurrentDomain.AssemblyLoad += (_, a) => {
@@ -27,9 +28,12 @@ public static class DllImports {
         };
     }
 
+    /// The host: libff9.so inside the APK, the executable in the headless host.
+    public static readonly IntPtr Host = NativeLibrary.TryLoad("libff9.so", out var h) ? h : NativeLibrary.GetMainProgramHandle();
+
     static IntPtr Resolve(string lib, Assembly asm, DllImportSearchPath? path) {
         string n = lib.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? lib[..^4] : lib;
-        if (hostLibs.Contains(n)) return NativeLibrary.GetMainProgramHandle();
+        if (hostLibs.Contains(n)) return Host;
         Log.Once("dll:" + lib, $"DllImport {lib} from {asm.GetName().Name}: no stand-in");
         return IntPtr.Zero;
     }
