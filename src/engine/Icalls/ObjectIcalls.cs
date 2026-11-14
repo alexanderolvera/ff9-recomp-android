@@ -256,6 +256,7 @@ public static class GameObjectIcalls {
     // ---- messages ----
     public static void Send(NGameObject g, string method, object? value, SendMessageOptions opts) {
         bool any = false;
+        if (!g.ActiveInHierarchy) return; // Unity: messages are not sent to inactive objects
         foreach (var c in g.Components.ToArray()) {
             if (c is not NMonoBehaviour mb || mb.Managed == null) continue;
             var mi = Find(mb.Managed.GetType(), method, value);
@@ -335,7 +336,7 @@ static class ComponentIcalls {
 
     [Icall("UnityEngine.Component::BroadcastMessage")]
     static void BroadcastMessage(Component self, string m, object v, SendMessageOptions o) {
-        void Rec(NTransform t) { GameObjectIcalls.Send(t.GameObject, m, v, SendMessageOptions.DontRequireReceiver); foreach (var c in t.Children.ToArray()) Rec(c); }
+        void Rec(NTransform t) { if (t.GameObject.ActiveInHierarchy) { GameObjectIcalls.Send(t.GameObject, m, v, SendMessageOptions.DontRequireReceiver); foreach (var c in t.Children.ToArray()) Rec(c); } }
         Rec(C(self).GameObject.Transform);
     }
 

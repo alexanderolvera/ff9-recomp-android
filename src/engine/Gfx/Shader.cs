@@ -218,7 +218,12 @@ public static class Shaders {
             while (n.StartsWith("[")) n = t.Next();     // attributes
             string line = t.RestOfLine();
             // ("Display", Type) = default
-            int c1 = line.LastIndexOf(')');
+            // the declaration's closing paren (not the one of a "(1,1,1,1)" default)
+            int c1 = -1, depth = 0;
+            for (int i = 0; i < line.Length; i++) {
+                if (line[i] == '(') depth++;
+                else if (line[i] == ')' && --depth == 0) { c1 = i; break; }
+            }
             int eq = line.IndexOf('=', Math.Max(0, c1));
             string def = eq >= 0 ? line[(eq + 1)..].Trim() : "";
             int comma = line.LastIndexOf(',', c1 >= 0 ? c1 : line.Length - 1);

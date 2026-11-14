@@ -48,9 +48,12 @@ public sealed class NMaterial : NObject, ICloneable {
     }
 
     /// Defaults for properties the shader declares but the material does not set.
+    public bool DefaultsApplied;
+
     public void ApplyShaderDefaults() {
         var sh = Shader;
         if (sh == null) return;
+        DefaultsApplied = true;
         foreach (var (name, (type, def)) in sh.Properties) {
             int id = PropIds.Id(name);
             string t = type.ToLowerInvariant();

@@ -207,6 +207,8 @@ public static class Pipeline {
         var b = Builtin(name, c, out bool found);
         if (found) return b;
         int id = PropIds.Id(name);
+        // materials read before their shader was parsed get the Properties defaults on first use
+        if (c.Mat != null && !c.Mat.DefaultsApplied) c.Mat.ApplyShaderDefaults();
         if (c.Block != null && c.Block.Vectors.TryGetValue(id, out var bv)) return bv;
         // a value the shader doesn't declare in Properties comes from the globals (Shader.SetGlobal*)
         // when one is set: a material's saved copy is stale (the field fades read their colours so)
@@ -239,6 +241,7 @@ public static class Pipeline {
         return n;
     }
 
+    [ThreadStatic] public static bool LogConsts;
     static unsafe void FillConsts(SubProgram sp, float[] buf, int count, DrawCtx c) {
         Array.Clear(buf, 0, count * 4);
         foreach (var (kind, reg, name, rows) in sp.Consts) {
@@ -250,6 +253,7 @@ public static class Pipeline {
                 }
             } else if (reg < count) {
                 var v = VectorFor(name, c);
+                if (LogConsts) Log.Info($"    const {kind} c{reg} {name} = {v}");
                 int o = reg * 4;
                 buf[o] = v.x; buf[o + 1] = v.y; buf[o + 2] = v.z; buf[o + 3] = v.w;
             }
@@ -488,13 +492,20 @@ public static class Pipeline {
             }
             foreach (var pass in sh.Passes) {
                 if (!PassRuns(pass)) { if (log) Log.Info($"    pass '{pass.Name}' skipped (LightMode {pass.Tags.GetValueOrDefault("LightMode")})"); continue; }
-                if (!BindPass(it.Mat, sh, pass, ctx)) { if (log) Log.Info("    pass bind failed"); continue; }
+                LogConsts = log;
+                bool bound = BindPass(it.Mat, sh, pass, ctx);
+                LogConsts = false;
+                if (!bound) { if (log) Log.Info("    pass bind failed"); continue; }
                 it.Mesh.Draw(it.Sub);
                 if (log && it.R is NSkinnedMeshRenderer skr && skr.SkinnedPositions is { Length: > 0 } sp)
                     Log.Info($"    skinned v0={sp[0]} v1={sp[Math.Min(100, sp.Length - 1)]} bones={skr.Bones.Length} go={skr.GameObject.Transform.Position} scale={skr.GameObject.Transform.LossyScale}");
                 if (log) {
                     var tx = Textures.OfOrNull(it.Mat.Textures.GetValueOrDefault(PropIds.Id("_MainTex")));
-                    Log.Info($"    drawn: glerr={GL.glGetError():x} tex gl={tx?.GlTex} {tx?.Width}x{tx?.Height} fmt={tx?.Format} mips={tx?.MipCount} px={(tx?.Pixels != null)} blend={pass.State.Blend?.Length} zt={pass.State.ZTest.Const} alpha={pass.State.AlphaTestFunc}");
+                    Log.Info($"    drawn: glerr={GL.glGetError():x} tex gl={tx?.GlTex} {tx?.Width}x{tx?.Height} fmt={tx?.Format} mips={tx?.MipCount} px={(tx?.Pixels != null)} blend={(pass.State.Blend == null ? "off" : string.Join("/", pass.State.Blend.Select(b => b.Resolve(it.Mat))))} cmask={pass.State.ColorMask} zt={pass.State.ZTest.Const} alpha={pass.State.AlphaTestFunc}");
+                    if (it.Mat.Vectors.Count > 0 || it.Mat.Textures.Count > 0)
+                        Log.Info("    mat#" + it.Mat.Id + " " + string.Join(" ", it.Mat.Vectors.Select(kv => $"{PropIds.Name(kv.Key)}={kv.Value}"))
+                            + " tex:" + string.Join(",", it.Mat.Textures.Select(kv => $"{PropIds.Name(kv.Key)}={(kv.Value == null ? "null" : Textures.OfOrNull(kv.Value)?.Name)}"))
+                            + " props:" + string.Join(",", sh.Properties.Select(kv => $"{kv.Key}[{kv.Value.type}]={kv.Value.def}")) + $" dflt={it.Mat.DefaultsApplied}" + (Globals.Vectors.TryGetValue(PropIds.Id("_Color"), out var gc) ? $" global_Color={gc}" : ""));
                 }
             }
         }
