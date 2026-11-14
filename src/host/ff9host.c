@@ -9,6 +9,7 @@
  * the managed stack, then exits 93 (the deliberate STOP, as in FF7Recomp's bring-up).
  */
 #include <dirent.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -294,6 +295,26 @@ static int cmd_play(void) {
    creates the EGL window surface on it. NULL in the headless host: off-screen pbuffer. */
 __attribute__((visibility("default"))) void *ff9_native_window;
 __attribute__((visibility("default"))) void *ff9_get_native_window(void) { return ff9_native_window; }
+/* the second-screen panels' state (FF9Engine Core/Companion.cs), read by the APK's Java side */
+static pthread_mutex_t companion_lock = PTHREAD_MUTEX_INITIALIZER;
+static char *companion_json;
+__attribute__((visibility("default"))) void ff9_companion_set(const char *json) {
+    char *c = strdup(json ? json : "");
+    pthread_mutex_lock(&companion_lock);
+    char *old = companion_json;
+    companion_json = c;
+    pthread_mutex_unlock(&companion_lock);
+    free(old);
+    if (getenv("FF9_COMPANION_PRINT")) { static int n; if (n++ % 10 == 0) printf("companion %s\n", json); }
+}
+/* a copy for the caller to free, or NULL */
+char *ff9_companion_get(void) {
+    pthread_mutex_lock(&companion_lock);
+    char *c = companion_json ? strdup(companion_json) : NULL;
+    pthread_mutex_unlock(&companion_lock);
+    return c;
+}
+
 #ifndef FF9_LIBRARY
 /* headless host: the window never changes (src/host/android_jni.c has the APK's versions) */
 __attribute__((visibility("default"))) int ff9_window_gen(void) { return 0; }

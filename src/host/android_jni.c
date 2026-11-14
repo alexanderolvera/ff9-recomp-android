@@ -95,6 +95,15 @@ JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRun(JNIEnv *env, jc
     _exit(r);
 }
 
+char *ff9_companion_get(void);
+JNIEXPORT jstring JNICALL Java_com_ff9recomp_GameActivity_nativeCompanion(JNIEnv *env, jclass cls) {
+    char *c = ff9_companion_get();
+    if (!c) return NULL;
+    jstring r = (*env)->NewStringUTF(env, c);
+    free(c);
+    return r;
+}
+
 JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativePad(JNIEnv *env, jclass cls, jint buttons, jint lt, jint rt, jint lx, jint ly, jint rx, jint ry) {
     static int last = -1;
     if (buttons != last) { __android_log_print(ANDROID_LOG_INFO, "FF9", "pad buttons %04x", buttons); last = buttons; }

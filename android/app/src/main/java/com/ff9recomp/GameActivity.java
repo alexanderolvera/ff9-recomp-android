@@ -23,6 +23,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     static native void nativeSetSurface(Object surface);
     static native int nativeRun(String dir, String log);
+    static native String nativeCompanion();
     static native void nativePad(int buttons, int lt, int rt, int lx, int ly, int rx, int ry);
 
     // XInput button bits
@@ -51,14 +52,48 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             root.addView(touch, new android.widget.FrameLayout.LayoutParams(-1, -1));
             ((android.hardware.input.InputManager) getSystemService(INPUT_SERVICE)).registerInputDeviceListener(deviceListener, null);
         }
-        updateTouch();
         setContentView(root);
+        if (prefs.getBoolean("bottom_screen", true)) showCompanion();
+        updateTouch();
         hideSystemUi();
         android.content.IntentFilter padFilter = new android.content.IntentFilter("com.ff9recomp.test.PAD");
         if (android.os.Build.VERSION.SDK_INT >= 33)
             registerReceiver(testPad, padFilter, android.Manifest.permission.DUMP, null, RECEIVER_EXPORTED);
         else
             registerReceiver(testPad, padFilter, android.Manifest.permission.DUMP, null);
+    }
+
+    // ---- the second screen (AYN Thor's bottom screen): the panels, in a Presentation that never
+    // takes focus; keys and sticks that reach it go to the game
+    private android.app.Presentation companion;
+    private static volatile boolean companionOn;
+
+    /** The game's latest panel state (JSON) for CompanionView, or null. */
+    static String companionState() {
+        if (!companionOn) return null;
+        try { return nativeCompanion(); } catch (UnsatisfiedLinkError e) { return null; }
+    }
+
+    private void showCompanion() {
+        android.hardware.display.DisplayManager dm = (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
+        android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+        if (ds.length == 0) { Log.i(TAG, "no second display"); return; }
+        android.view.Display d = ds[0];
+        Log.i(TAG, "panels on display " + d.getDisplayId() + " \"" + d.getName() + "\"");
+        companion = new android.app.Presentation(this, d) {
+            @Override public boolean dispatchKeyEvent(KeyEvent e) { return GameActivity.this.dispatchKeyEvent(e); }
+            @Override public boolean dispatchGenericMotionEvent(MotionEvent e) { return GameActivity.this.dispatchGenericMotionEvent(e); }
+        };
+        companion.getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        companion.setContentView(new CompanionView(companion.getContext()));
+        try {
+            companion.show();
+            companionOn = true;
+            try { Os.setenv("FF9_COMPANION", "1", true); } catch (Exception ignored) { }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "panels not shown: " + e);
+            companion = null;
+        }
     }
 
     // ---- touch controls and controller detection
@@ -78,7 +113,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     private void updateTouch() {
         if (touch == null) return;
-        boolean show = touchMode == 1 || (touchMode == 0 && !gamepadConnected());
+        boolean show = touchMode == 1 || (touchMode == 0 && companion == null && !gamepadConnected());
         touch.setVisibility(show ? View.VISIBLE : View.GONE);
         if (!show && (touchButtons | touchLt | touchRt) != 0) { touchButtons = touchLt = touchRt = 0; send(); }
     }
@@ -93,6 +128,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onDestroy() {
         try { unregisterReceiver(testPad); } catch (Exception ignored) { }
+        if (companion != null) { companion.dismiss(); companion = null; }
         super.onDestroy();
     }
 

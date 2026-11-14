@@ -39,6 +39,7 @@ final class Settings {
         new Option("turbo_dialog", "Fast dialog", "Holding confirm speeds text along.", 1),
         new Option("swap_confirm", "Swap confirm and cancel", "B confirms and A cancels (Japanese layout).", 0),
         new Option("analog_run", "Analog walk and run", "Walk or run by how far the stick is pushed.", 1),
+        new Option("bottom_screen", "Second screen panels", "On two-screen devices: party HP/MP, ATB, enemies and gil on the second screen. Off leaves it to other apps.", 1),
         new Option("touch_controls", "Touch controls", "Auto: on screen only when no controller is connected.", 0,
                 "Auto", "Always", "Never"),
         new Option("music_volume", "Music volume", null, 4, "0%", "25%", "50%", "75%", "100%"),

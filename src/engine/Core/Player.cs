@@ -136,6 +136,7 @@ public static class Player {
         Render?.Invoke();
         Coroutines.Run(Coroutines.Phase.EndOfFrame);
         DebugDump.Tick();
+        Companion.Tick();
         if (memEvery > 0 && Clock.Frame % memEvery == 0) MemStat();
         Destroyer.Flush();
         while (levelRequests.Count > 0) {
