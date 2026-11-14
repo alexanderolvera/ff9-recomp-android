@@ -22,6 +22,9 @@ public static class Clock {
 
     static double last = -1;
 
+    /// After a pause (no window) the next frame is a normal one, not one long delta.
+    public static void Resync() => last = -1;
+
     public static void Tick() {
         double t = sw.Elapsed.TotalSeconds;
         float d = last < 0 ? 1 / 60f : (float)(t - last);

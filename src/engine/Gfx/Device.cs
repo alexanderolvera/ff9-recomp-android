@@ -13,8 +13,13 @@ public static unsafe class Device {
     public static IntPtr NativeWindow;      // set by the APK before Init
 
     [System.Runtime.InteropServices.DllImport("__Internal")] static extern IntPtr ff9_get_native_window();
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern int ff9_window_gen();
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern void ff9_window_ack(int gen);
+    static IntPtr config;
+    static int windowGen;
 
     public static void Init() {
+        windowGen = ff9_window_gen();
         if (NativeWindow == IntPtr.Zero) NativeWindow = ff9_get_native_window();
         Display = EGL.eglGetDisplay(IntPtr.Zero);
         int maj, min;
@@ -28,6 +33,7 @@ public static unsafe class Device {
         IntPtr cfg;
         int n;
         if (EGL.eglChooseConfig(Display, attrs, &cfg, 1, &n) == 0 || n == 0) throw new Exception("eglChooseConfig failed " + EGL.eglGetError());
+        config = cfg;
         int* ctxAttrs = stackalloc int[] { EGL.CONTEXT_CLIENT_VERSION, 3, EGL.NONE };
         Context = EGL.eglCreateContext(Display, cfg, IntPtr.Zero, ctxAttrs);
         if (Context == IntPtr.Zero) throw new Exception("eglCreateContext failed " + EGL.eglGetError());
@@ -52,8 +58,44 @@ public static unsafe class Device {
 
     public static void Present() {
         if (!Ready) return;
+        if (ff9_window_gen() != windowGen) ChangeWindow();
         EGL.eglSwapBuffers(Display, Surface);
         if (finish) GL.glFinish();
+    }
+
+    /// The app's window went away (sleep, background) or came back: drop the EGL surface, and
+    /// while there is no window the game waits here (paused, sound muted); a new window gets a
+    /// new surface and the game carries on where it was.
+    static void ChangeWindow() {
+        bool paused = false;
+        while (true) {
+            int gen = ff9_window_gen();
+            if (gen == windowGen && Surface != IntPtr.Zero) break;
+            windowGen = gen;
+            if (Surface != IntPtr.Zero) {
+                EGL.eglMakeCurrent(Display, IntPtr.Zero, IntPtr.Zero, Context);
+                EGL.eglDestroySurface(Display, Surface);
+                Surface = IntPtr.Zero;
+            }
+            NativeWindow = ff9_get_native_window();
+            if (NativeWindow != IntPtr.Zero) {
+                Surface = EGL.eglCreateWindowSurface(Display, config, NativeWindow, null);
+                if (Surface != IntPtr.Zero) {
+                    EGL.eglMakeCurrent(Display, Surface, Surface, Context);
+                    int w, h;
+                    EGL.eglQuerySurface(Display, Surface, EGL.WIDTH, &w);
+                    EGL.eglQuerySurface(Display, Surface, EGL.HEIGHT, &h);
+                    Width = w; Height = h;
+                    EGL.eglSwapInterval(Display, 1);
+                    Log.Info($"window back: {Width}x{Height}");
+                } else Log.Warn("EGL surface on the new window failed " + EGL.eglGetError());
+            }
+            ff9_window_ack(gen);
+            if (Surface != IntPtr.Zero) break;
+            if (!paused) { paused = true; Log.Info("window gone: game paused"); Core.AppPause.Set(true); }
+            System.Threading.Thread.Sleep(50);
+        }
+        if (paused) { Core.AppPause.Set(false); Log.Info("game resumed"); }
     }
 
     /// Reads the default framebuffer to a PNG file.

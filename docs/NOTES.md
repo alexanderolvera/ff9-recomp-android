@@ -106,3 +106,14 @@
   instead corrupted strings after a GC (not understood; avoid adding logic to that icall).
 - `-memoria-battle 1` is too hard for a level-1 Zidane (enemies hit for 600-800); use
   `-memoria-seed 1` to get one turn. 302 is a scripted battle (no party input).
+
+## App layer (ported from FF7Recomp, 2026-11-14)
+- adb test API (TestControl, DUMP-protected): `am broadcast -a com.ff9recomp.test.GET|SET|STOP|REPORT -n com.ff9recomp/.TestControl`,
+  `am start -n com.ff9recomp/.LauncherActivity -f 0x24000000 --ez test_play true`,
+  `am broadcast -a com.ff9recomp.test.PAD -p com.ff9recomp --ei buttons 0x1000 --ei ms 150` (XInput bits).
+- Settings (Settings.java) live in the launcher's prefs and are written into game/Memoria.ini on Play
+  (read/written as ISO-8859-1: the file is not valid UTF-8).
+- Sleep/background: surfaceDestroyed hands the engine a null window (generation handshake in
+  android_jni.c); Gfx/Device.ChangeWindow drops the EGL surface, waits (SoLoud muted), recreates it.
+- Select+Start held 1 s: Leave dialog (the game sees neither button while both are held).
+- Report a problem: zip with ff9.log (+prev), Memoria.log/.ini, java-crash.txt, tombstone/ANR records.

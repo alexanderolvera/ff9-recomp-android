@@ -19,5 +19,14 @@
         <activity android:name=".GameActivity" android:exported="false" android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask" android:process=":game"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode" />
+        <!-- adb test API (TestControl): GET/SET/STOP/REPORT. DUMP: only the shell may call it -->
+        <receiver android:name=".TestControl" android:exported="true" android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.ff9recomp.test.GET" />
+                <action android:name="com.ff9recomp.test.SET" />
+                <action android:name="com.ff9recomp.test.STOP" />
+                <action android:name="com.ff9recomp.test.REPORT" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

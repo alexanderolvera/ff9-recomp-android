@@ -294,6 +294,11 @@ static int cmd_play(void) {
    creates the EGL window surface on it. NULL in the headless host: off-screen pbuffer. */
 __attribute__((visibility("default"))) void *ff9_native_window;
 __attribute__((visibility("default"))) void *ff9_get_native_window(void) { return ff9_native_window; }
+#ifndef FF9_LIBRARY
+/* headless host: the window never changes (src/host/android_jni.c has the APK's versions) */
+__attribute__((visibility("default"))) int ff9_window_gen(void) { return 0; }
+__attribute__((visibility("default"))) void ff9_window_ack(int gen) { (void)gen; }
+#endif
 
 __attribute__((visibility("default"))) int ff9_main(int argc, char **argv) {
     if (argc < 3) { fprintf(stderr, "usage: ff9host <dir> jit | run <Type> <Method>\n"); return 64; }

@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 int ff9_main(int argc, char **argv);
@@ -36,9 +37,37 @@ static void *log_thread(void *arg) {
     return NULL;
 }
 
+/* The window can come and go (sleep, the app in the background). Each change bumps a generation;
+ * the engine (Gfx/Device.cs, at each Present) drops its EGL surface, makes one on the new window
+ * or waits for one, and acknowledges the generation. Losing the window waits for that (Android
+ * wants the surface unused once surfaceDestroyed returns), at most a second. */
+static pthread_mutex_t win_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t win_cond = PTHREAD_COND_INITIALIZER;
+static int win_gen, win_ack;
+static int game_running;
+
+__attribute__((visibility("default"))) int ff9_window_gen(void) { return __atomic_load_n(&win_gen, __ATOMIC_ACQUIRE); }
+__attribute__((visibility("default"))) void ff9_window_ack(int gen) {
+    pthread_mutex_lock(&win_lock);
+    win_ack = gen;
+    pthread_cond_broadcast(&win_cond);
+    pthread_mutex_unlock(&win_lock);
+}
+
 JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativeSetSurface(JNIEnv *env, jclass cls, jobject surface) {
-    if (ff9_native_window) { ANativeWindow_release(ff9_native_window); ff9_native_window = NULL; }
-    if (surface) ff9_native_window = ANativeWindow_fromSurface(env, surface);
+    pthread_mutex_lock(&win_lock);
+    void *old = ff9_native_window;
+    ff9_native_window = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
+    int gen = ++win_gen;
+    if (game_running && !surface) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 1;
+        while (win_ack < gen && pthread_cond_timedwait(&win_cond, &win_lock, &ts) == 0) { }
+    }
+    pthread_mutex_unlock(&win_lock);
+    /* the EGL surface holds its own reference to the old window */
+    if (old) ANativeWindow_release(old);
 }
 
 JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRun(JNIEnv *env, jclass cls, jstring jdir, jstring jlog) {
@@ -54,6 +83,7 @@ JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRun(JNIEnv *env, jc
     char *args[] = {"ff9", strdup(dir), "play", NULL};
     (*env)->ReleaseStringUTFChars(env, jdir, dir);
     (*env)->ReleaseStringUTFChars(env, jlog, logp);
+    game_running = 1;
     int r = ff9_main(3, args);
     /* the game quit: end the game process (":game") without running static destructors
        while the runtime's and the audio threads are still alive */
