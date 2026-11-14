@@ -1,0 +1,10 @@
+# Game files, anything derived from them, and downloads are never committed.
+/work/
+/out/
+/dl/
+/ref/
+/game/
+/build*/
+*.apk
+*.aab
+__pycache__/
