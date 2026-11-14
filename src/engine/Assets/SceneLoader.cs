@@ -153,7 +153,7 @@ public sealed class SceneBuilder : IPPtrResolver {
         foreach (var pid in order) {
             var o = made[pid];
             switch (o) {
-                case NMonoBehaviour mb: FillMono(mb, file.Reader(pid)); break;
+                case NMonoBehaviour mb: FillMono(mb, file.Reader(pid), file.TreeOf(file.Objects[pid])); break;
                 case NTransform: break;
                 case NComponent c: FillComponent(c, file.Reader(pid)); break;
             }
@@ -178,13 +178,13 @@ public sealed class SceneBuilder : IPPtrResolver {
             if (made.TryGetValue(k, out var ko) && ko is NTransform kt) { kt.Parent = t; t.Children.Add(kt); }
     }
 
-    void FillMono(NMonoBehaviour mb, BinReader r) {
+    void FillMono(NMonoBehaviour mb, BinReader r, TypeTree? tree) {
         r.PPtr();
         mb.Enabled = r.U8() != 0; r.Align4();
         r.PPtr();
         mb.Name = r.String();
         Scripts.RunConstructor(mb.Managed!);
-        Scripts.ReadFields(mb.Managed!, r, file, this);
+        Scripts.ReadFields(mb.Managed!, r, file, this, tree);
         if (!asset) Behaviours.Add(mb);
     }
 

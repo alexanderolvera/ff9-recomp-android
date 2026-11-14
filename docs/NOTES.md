@@ -33,3 +33,21 @@
   script types, externals.
 - level0 = splash scene: `Camera_SplashTitle` (Camera + `SplashScreen`), `SplashTitle`
   (SpriteRenderer).
+
+## Engine notes (M1-M3)
+- Engine calls: every UnityEngine internal call is a jump thunk (out/host/ue_thunks.S) through
+  ue_icall_table; FF9Engine fills slots with its [Icall] methods' compiled code. Registering
+  managed methods with Mono directly broke when a caller got compiled (and the icall resolved)
+  before registration finished.
+- Debug switches (FF9_ENV): FF9_FRAMES, FF9_SHOT=f1,f2:dir, FF9_DRAWLOG=frame, FF9_DUMP_FRAME=frames
+  (+FF9_INSPECT=Types or FF9_INSPECT_GO=Name_With_Underscores), FF9_TRACE_FIELDS=Type,
+  FF9_DUMP_TREE=classId, FF9_DUMP_GLSL, FF9_SKIP_SHADER, FF9_ONLY_Q/FF9_SKIP_Q, FF9_DUMP_TEX,
+  FF9_TRACE_MESHCOL, FF9_STOP_ON_EXCEPTION.
+- Memoria's own log (game/Memoria.log on the device) explains most startup failures.
+- Gotchas found: serialized 1/2-byte script fields align to 4 except inside arrays; format-15
+  objects' type ID is the class ID (match type trees by it); AnimationCurve wrap modes are
+  Unity's internal enum (0 ping-pong, 1 repeat, 2 clamp); CharacterInfo uv is bottom-left with
+  positive height and vert.y is relative to the ascent; Memoria casts SoLoud handles to int (C++
+  objects are allocated below 2 GB, src/host/lowmem.cpp); .NET 8 rejects relative
+  Assembly.LoadFile (detour in Compat.cs); Android .NET crypto needs a JVM (src/host/crypto.c).
+- Memoria.ini on the device: [Audio] Backend = 2 (SoLoud).

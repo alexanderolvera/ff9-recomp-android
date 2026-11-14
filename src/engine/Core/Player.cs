@@ -55,7 +55,27 @@ public static class Player {
 
     public static int Main(string[] args) {
         Native.DllImports.Install();
+        Native.Compat.Install();
         PollInput = () => { Touches.WasDown = Touches.Down; Icalls.Pad.Poll(); };
+        Gfx.Textures.Register(); Gfx.Shaders.Register(); Gfx.Materials.Register(); Gfx.Meshes.Register();
+        Gfx.Sprites.Register(); Gfx.RendererComponents.Register(); Gfx.Cameras.Register(); Assets.TextAssets.Register(); Physics.Colliders.Register(); Gfx.Canvases.Register(); Text.Fonts.Register();
+        if (Environment.GetEnvironmentVariable("FF9_NOGL") == null) {
+            try { Gfx.Device.Init(); } catch (Exception e) { Log.Warn("GL init failed: " + e.Message); }
+            Icalls.Display.Width = Gfx.Device.Width; Icalls.Display.Height = Gfx.Device.Height;
+        }
+        string? shot = Environment.GetEnvironmentVariable("FF9_SHOT");     // "frame[,frame...]:dir"
+        var shotFrames = new HashSet<int>();
+        string shotDir = "shots";
+        if (shot != null) {
+            var sp = shot.Split(':');
+            foreach (var f in sp[0].Split(',')) if (int.TryParse(f, out int fi)) shotFrames.Add(fi);
+            if (sp.Length > 1) shotDir = sp[1];
+        }
+        Render = () => {
+            Gfx.Pipeline.RenderFrame();
+            if (shotFrames.Contains(Clock.Frame)) Gfx.Device.Screenshot(System.IO.Path.Combine(shotDir, $"frame{Clock.Frame:D5}.png"));
+            Gfx.Device.Present();
+        };
         Assets.AssetDB.Init();
         SceneNames = Assets.AssetDB.SceneNames;
         LoadLevel(0, false);
@@ -96,6 +116,7 @@ public static class Player {
         foreach (var b in Snapshot()) if (Runs(b) && b.Started) ScriptMethods.Call(b, b.Methods.LateUpdate);
         Render?.Invoke();
         Coroutines.Run(Coroutines.Phase.EndOfFrame);
+        DebugDump.Tick();
         Destroyer.Flush();
         while (levelRequests.Count > 0) {
             var r = levelRequests.Dequeue();

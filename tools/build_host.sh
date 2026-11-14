@@ -6,8 +6,10 @@ SDK=${ANDROID_SDK:-$LOCALAPPDATA/Android/Sdk}
 CC=$SDK/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 ADB="$SDK/platform-tools/adb.exe -s ${ANDROID_SERIAL:-76dd1750}"
 N=dl/mono/pkg/runtimes/android-arm64/native
+"${CC%clang.exe}clang++.exe" --target=aarch64-linux-android30 -O2 -std=c++17 -c src/host/lowmem.cpp -o out/host/lowmem.o
+"${CC%clang.exe}clang++.exe" --target=aarch64-linux-android30 -O2 -std=c++17 -w -DWITH_MINIAUDIO -Iout/soloud/src-copy/include -c src/host/soloud_ext.cpp -o out/host/soloud_ext.o
 "$CC" --target=aarch64-linux-android30 -O1 -g -Wall -Wno-unused-function -I$N/include/mono-2.0 \
-  src/host/*.c out/host/ue_icalls.c -L$N -lmonosgen-2.0 -lm -Wl,--export-dynamic -o out/host/ff9host
+  src/host/*.c out/host/ue_icalls.c out/host/ue_thunks.S out/host/lowmem.o out/host/soloud_ext.o -L$N -lmonosgen-2.0 -lm -Wl,--whole-archive out/soloud/libsoloud.a -Wl,--no-whole-archive -lc++_static -lc++abi -lOpenSLES -laaudio -llog -Wl,--export-dynamic -o out/host/ff9host
 [ "$NO_ENGINE" ] || bash tools/build_engine.sh >/dev/null
 MSYS_NO_PATHCONV=1 $ADB push out/engine/FF9Engine.dll /data/local/tmp/ff9/engine/FF9Engine.dll >/dev/null
 MSYS_NO_PATHCONV=1 $ADB push out/host/ff9host /data/local/tmp/ff9/ff9host >/dev/null

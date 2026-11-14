@@ -182,7 +182,7 @@ static class RandomIcalls {
     static void InCircle(ref Vector2 v) { do v = new Vector2(Value() * 2 - 1, Value() * 2 - 1); while (v.x * v.x + v.y * v.y > 1); }
 }
 
-static class MathIcalls {
+public static class MathIcallsPublic {
     const float Deg = MathF.PI / 180;
 
     [Icall("UnityEngine.Quaternion::INTERNAL_CALL_AngleAxis")]

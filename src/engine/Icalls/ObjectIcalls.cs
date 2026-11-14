@@ -93,7 +93,7 @@ static class ObjectIcalls {
     static UObject Instantiate(UObject data, ref Vector3 pos, ref Quaternion rot) => Cloner.Clone(data, pos, rot);
 }
 
-static class GameObjectIcalls {
+public static class GameObjectIcalls {
     static NGameObject G(GameObject g) => Registry.Of<NGameObject>(g);
 
     [Icall("UnityEngine.GameObject::Internal_CreateGameObject")]

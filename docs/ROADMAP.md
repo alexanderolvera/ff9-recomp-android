@@ -15,9 +15,9 @@ Each milestone ends with its exit test, a commit and a report. One milestone at 
 | # | Milestone | Exit test |
 |---|---|---|
 | M0 ✅ | Spike: Mono on the Thor | 32,476 game methods JIT on the Thor; level0's `SplashScreen.Awake` runs to its first engine call |
-| M1 | Engine core, headless | Scene graph + MonoBehaviour lifecycle; the game's own startup reaches `Application.LoadLevel("Bundle")` and keeps running frames with every stub hit logged by name |
-| M2 | Assets | `resources.assets` and the p0data bundles load (textures, meshes, text, MonoBehaviour fields), checked against an independent reader on the PC |
-| M3 | Title screen | bgfx renderer, D3D9 SM2/3 shader translator, Unity UI/NGUI text; FF9's title screen drawn on the Thor |
+| M1 ✅ | Engine core, headless | Scene graph + MonoBehaviour lifecycle; the game's own startup reaches `Application.LoadLevel("Bundle")` and keeps running frames with every stub hit logged by name |
+| M2 ✅ | Assets | `resources.assets` and the p0data bundles load (textures, meshes, text, MonoBehaviour fields), checked against an independent reader on the PC |
+| M3 ✅ | Title screen | bgfx renderer, D3D9 SM2/3 shader translator, Unity UI/NGUI text; FF9's title screen drawn on the Thor |
 | M4 | Playable | Input (Thor controller), SoLoud audio, movies, field/world/battle rendering, battle effects plugin; new game through Alexandria to Evil Forest with saves |
 | M5 | APK + launcher | Release-signed APK that sets up the game from the user's copy on the device, Memoria config UI |
 | M6 | Moguri Mod | Moguri's textures and backgrounds load through Memoria in game on the Thor |
@@ -32,3 +32,13 @@ Each milestone ends with its exit test, a commit and a report. One milestone at 
   LateUpdate / coroutines each frame, in Unity's order.
 - The named-stop loop from FF7 (M1 there): run, stop at the first engine call that has no
   implementation, implement it, run again.
+
+## Status (2026-11-14)
+- M1-M3 done: on the Thor (headless host, GLES 3.2 pbuffer), the game boots through
+  BundleSceneSelector -> SplashScreen -> Bundle -> Loading -> MainMenu -> Title and draws the full
+  title screen (background, logo, menu, cursor, copyright text) with SoLoud audio running.
+- Engine: FF9Engine (C#, src/engine) implements ~880 of UnityEngine's internal calls; asset bundles
+  (UnityRaw, UnityWeb/LZMA) with type trees; D3D9 SM2/3 assembly -> GLSL ES 3.00; CFF/TrueType
+  rasterizer for dynamic fonts; Win32/Steam/crypto stand-ins in the host.
+- Next (M4): input on the title (New Game), field maps (FieldMap scene: backgrounds, characters,
+  legacy Animation), movies (Theora), battle (effects plugin lift), then the APK.

@@ -11,6 +11,7 @@ public static class DllImports {
     static readonly HashSet<string> hostLibs = new(StringComparer.OrdinalIgnoreCase) {
         "user32", "kernel32", "steamwrapper", "XInputInterface", "JoyShockLibrary", "__Internal", "SdLib",
         "theorawrapper", "FF9SpecialEffectPlugin", "soloud", "SaXAudio", "steam_api", "steam_api64",
+        "libSystem.Security.Cryptography.Native.Android",
     };
 
     public static void Install() {
@@ -18,6 +19,8 @@ public static class DllImports {
             try { NativeLibrary.SetDllImportResolver(Assembly.Load(name), Resolve); }
             catch (Exception e) { Log.Warn($"DllImport resolver for {name}: {e.Message}"); }
         }
+        // .NET's Android crypto backend needs a JVM; the host implements the parts the game uses
+        NativeLibrary.SetDllImportResolver(typeof(System.Security.Cryptography.Aes).Assembly, Resolve);
         AppDomain.CurrentDomain.AssemblyLoad += (_, a) => {
             if (a.LoadedAssembly.GetName().Name == "Memoria.Scripts")
                 try { NativeLibrary.SetDllImportResolver(a.LoadedAssembly, Resolve); } catch { }

@@ -125,6 +125,8 @@ public static class AssetDB {
         var a = Registry.Add(new NAsset { File = f, PathId = info.PathId, IsAsset = true, ClassId = info.ClassId }, m);
         loaded[(f, info.PathId)] = a;
         var r = f.Reader(info);
+        if (dumpTree != null && dumpTree == info.ClassId.ToString() && treesDumped.Add(info.ClassId) && f.TreeOf(info) is { } tree)
+            DumpTree(tree.Root, 0);
         if (Readers.TryGetValue(info.ClassId, out var reader)) {
             try { reader(a, r); } catch (Exception e) { Log.Exception(e, $"reading {ClassIds.Name(info.ClassId)} {f.Name}:{info.PathId}"); }
         } else if (IsNamed(info.ClassId)) {
@@ -132,6 +134,14 @@ public static class AssetDB {
             Log.Once("reader" + info.ClassId, $"no reader for {ClassIds.Name(info.ClassId)} assets (first: '{a.Name}')");
         }
         return a;
+    }
+
+    static readonly string? dumpTree = Environment.GetEnvironmentVariable("FF9_DUMP_TREE");
+    static readonly HashSet<int> treesDumped = new();
+
+    static void DumpTree(TypeTree.Node n, int depth) {
+        Log.Info($"{new string(' ', depth * 2)}{n.Type} {n.Name} size={n.ByteSize}{(n.Align ? " align" : "")}");
+        if (depth < 4) foreach (var c in n.Children) DumpTree(c, depth + 1);
     }
 
     static bool IsNamed(int c) => c is 21 or 28 or 43 or 48 or 49 or 74 or 83 or 84 or 89 or 91 or 117 or 128 or 213 or 221 or 152 or 62 or 134 or 90 or 200;
@@ -148,7 +158,7 @@ public static class AssetDB {
         var a = Registry.Add(new NAsset { File = f, PathId = info.PathId, IsAsset = true, Name = name, ClassId = ClassIds.MonoBehaviour }, m);
         loaded[(f, info.PathId)] = a;
         Scripts.RunConstructor(m);
-        Scripts.ReadFields(m, r, f, new AssetResolver());
+        Scripts.ReadFields(m, r, f, new AssetResolver(), f.TreeOf(info));
         if (m is ScriptableObject) {
             var mi = Scripting.ScriptMethods.Find(type, "OnEnable");
             try { mi?.Invoke(m, null); } catch (TargetInvocationException e) { Log.Exception(e.InnerException!, type.Name + ".OnEnable"); }
@@ -202,9 +212,14 @@ public static class Scripts {
 
     static readonly HashSet<Type> sizeWarned = new();
 
-    public static void ReadFields(UObject m, BinReader r, SerializedFile f, IPPtrResolver resolver) {
+    public static void ReadFields(UObject m, BinReader r, SerializedFile f, IPPtrResolver resolver, TypeTree? tree = null) {
         var ctx = new Fields.Ctx { File = f, Resolver = resolver };
         var t = m.GetType();
+        if (tree != null) {
+            try { TreeFields.ReadScript(m, tree.Root, r, ctx); }
+            catch (Exception e) { if (sizeWarned.Add(t)) Log.Exception(e, $"reading fields of {t.FullName} (type tree)"); }
+            return;
+        }
         try {
             Fields.Read(m, t, r, ctx);
             if (r.Pos < r.End && sizeWarned.Add(t))

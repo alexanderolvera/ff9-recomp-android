@@ -29,6 +29,7 @@ public static unsafe class Boot {
                     IntPtr fn = m.MethodHandle.GetFunctionPointer();
                     byte[] name = System.Text.Encoding.UTF8.GetBytes(a.Name + "\0");
                     fixed (byte* p = name) add(p, fn);
+                    if (Environment.GetEnvironmentVariable("FF9_ICALL_TRACE") is { } tr && a.Name.Contains(tr)) Console.WriteLine($"icall {a.Name} -> {t.Name}.{m.Name} {fn:x}");
                     n++;
                 }
         return n;

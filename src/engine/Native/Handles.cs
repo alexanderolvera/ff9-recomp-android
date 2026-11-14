@@ -119,12 +119,15 @@ public static class Curves {
             var k = new Keyframe(r.F32(), r.F32(), r.F32(), r.F32());
             d.Keys.Add(k);
         }
-        d.Pre = (WrapMode)r.I32();
-        d.Post = (WrapMode)r.I32();
+        d.Pre = FromInternal(r.I32());
+        d.Post = FromInternal(r.I32());
         var c = (AnimationCurve)RuntimeHelpers.GetUninitializedObject(typeof(AnimationCurve));
         Handles.SetPtr(c, Handles.New(d));
         return c;
     }
+
+    /// Serialized curves use Unity's internal wrap mode: 0 ping-pong, 1 repeat, 2 clamp.
+    public static WrapMode FromInternal(int m) => m switch { 0 => WrapMode.PingPong, 1 => WrapMode.Loop, _ => WrapMode.ClampForever };
 
     static CurveData D(AnimationCurve s) => Handles.Data<CurveData>(s);
     [Icall("UnityEngine.AnimationCurve::Init")]

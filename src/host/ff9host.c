@@ -205,7 +205,29 @@ static int cmd_run(const char *type, const char *method) {
 }
 
 /* ---- FF9Engine.dll: the engine's internal calls are managed methods ---- */
-static void add_icall(const char *name, const void *fn) { ICALL(name, fn); }
+/* UnityEngine internal calls are registered as thunks that jump through ue_icall_table: the
+   engine fills the table slot. Anything else (e.g. System.* overrides) goes to Mono directly. */
+extern const void *ue_icall_table[];
+static void add_icall(const char *name, const void *fn) {
+    static int sorted_n = 0;
+    static int *order = NULL;
+    if (!order) {   /* index of names, for bsearch */
+        order = malloc(sizeof(int) * ue_icall_count);
+        for (int i = 0; i < ue_icall_count; i++) order[i] = i;
+        for (int i = 1; i < ue_icall_count; i++)       /* insertion sort, once */
+            for (int j = i; j > 0 && strcmp(ue_icall_names[order[j - 1]], ue_icall_names[order[j]]) > 0; j--) {
+                int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+            }
+        sorted_n = ue_icall_count;
+    }
+    int lo = 0, hi = sorted_n - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2, c = strcmp(name, ue_icall_names[order[mid]]);
+        if (!c) { ue_icall_table[order[mid]] = fn; return; }
+        if (c < 0) hi = mid - 1; else lo = mid + 1;
+    }
+    ICALL(name, fn);
+}
 
 static int load_engine(void) {
     MonoAssemblyName *an = mono_assembly_name_new("FF9Engine");

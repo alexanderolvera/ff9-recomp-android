@@ -34,6 +34,7 @@ public static class Cloner {
                 foreach (var f in Fields.Of(smb.Managed!.GetType()))
                     f.SetValue(dmb.Managed, CopyValue(f.GetValue(smb.Managed), omap, 0));
             }
+        foreach (var rm in Remappers) rm(map);
         foreach (var b in newBehaviours) Player.AddBehaviour(b);
         foreach (var b in newBehaviours) Player.Awaken(b);
         return omap[src];
@@ -131,4 +132,7 @@ public static class Cloner {
     }
 
     public static Action<NObject, NObject>? AssetCloned;
+
+    /// Fix-ups after a hierarchy copy (bone lists and other references held by native records).
+    public static readonly List<Action<Dictionary<NObject, NObject>>> Remappers = new();
 }
