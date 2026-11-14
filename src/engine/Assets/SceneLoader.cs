@@ -161,8 +161,10 @@ public sealed class SceneBuilder : IPPtrResolver {
                 case NComponent c: FillComponent(c, file.Reader(pid)); break;
             }
         }
-        foreach (var pid in order)
-            if (made[pid] is NMonoBehaviour mb) Player.AddBehaviour(mb);
+        // a prefab asset's scripts never run: only its instances do
+        if (!asset)
+            foreach (var pid in order)
+                if (made[pid] is NMonoBehaviour mb) Player.AddBehaviour(mb);
     }
 
     void FillTransform(NTransform t, BinReader r) {

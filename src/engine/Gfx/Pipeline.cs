@@ -190,6 +190,7 @@ public static class Pipeline {
                 m = M.Identity; return true;
         }
         if (c.Block != null && c.Block.Matrices.TryGetValue(PropIds.Id(name), out m)) return true;
+        if (c.Mat?.Shader is { } msh && !msh.Properties.ContainsKey(name) && Globals.Matrices.TryGetValue(PropIds.Id(name), out m)) return true;
         if (c.Mat != null && c.Mat.Matrices.TryGetValue(PropIds.Id(name), out m)) return true;
         if (Globals.Matrices.TryGetValue(PropIds.Id(name), out m)) return true;
         m = M.Identity;
@@ -207,6 +208,9 @@ public static class Pipeline {
         if (found) return b;
         int id = PropIds.Id(name);
         if (c.Block != null && c.Block.Vectors.TryGetValue(id, out var bv)) return bv;
+        // a value the shader doesn't declare in Properties comes from the globals (Shader.SetGlobal*)
+        // when one is set: a material's saved copy is stale (the field fades read their colours so)
+        if (c.Mat?.Shader is { } msh && !msh.Properties.ContainsKey(name) && Globals.Vectors.TryGetValue(id, out var gv0)) return gv0;
         if (c.Mat != null) {
             if (c.Mat.Vectors.TryGetValue(id, out var mv)) return mv;
             if (c.Mat.Floats.TryGetValue(id, out var mf)) return new Vector4(mf, mf, mf, mf);
@@ -369,6 +373,7 @@ public static class Pipeline {
     static readonly int SkipQueue = int.TryParse(Environment.GetEnvironmentVariable("FF9_SKIP_Q"), out var sq) ? sq : -1;
     static readonly int OnlyQueue = int.TryParse(Environment.GetEnvironmentVariable("FF9_ONLY_Q"), out var oq) ? oq : -1;
     static readonly string? SkipShader = Environment.GetEnvironmentVariable("FF9_SKIP_SHADER");
+    static readonly string? SkipCamera = Environment.GetEnvironmentVariable("FF9_SKIP_CAMERA");   // "Name@depth" substring
     public static readonly bool DumpGlsl = Environment.GetEnvironmentVariable("FF9_DUMP_GLSL") != null;
     public static readonly int DrawLogFrame = int.TryParse(Environment.GetEnvironmentVariable("FF9_DRAWLOG"), out var f) ? f : -1;
 
@@ -377,7 +382,10 @@ public static class Pipeline {
         var cams = Cameras.Live.Where(c => c.Enabled && c.GameObject.ActiveInHierarchy).OrderBy(c => c.Target != null ? 0 : 1).ThenBy(c => c.Depth).ToList();
         RenderTargets.Set(null);
         if (cams.Count == 0) { GL.glClearColor(0, 0, 0, 1); GL.glClear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT); }
-        foreach (var c in cams) RenderCamera(c, null, null);
+        foreach (var c in cams) {
+            if (SkipCamera != null && $"{c.GameObject.Name}@{c.Depth}" .Contains(SkipCamera)) continue;
+            RenderCamera(c, null, null);
+        }
         Canvases.RenderOverlay();
         Gui.OnGUI();
         RenderTargets.Set(null);
@@ -452,7 +460,8 @@ public static class Pipeline {
         var ctx = new DrawCtx { V = View, P = Proj };
         bool log = DrawLogFrame == Clock.Frame;
         if (log && cam.Depth >= 2) foreach (var kv in Globals.Vectors) Log.Info($"  global {PropIds.Name(kv.Key)} = {kv.Value}");
-        if (log) Log.Info($"camera '{cam.GameObject.Name}' depth={cam.Depth} mask={cam.CullingMask:x} ortho={cam.Orthographic} size={cam.OrthoSize} clear={cam.ClearFlags} bg={cam.Background} rect={cam.PixelRect} items={items.Count}");
+        if (log && cam.Depth >= 2) foreach (var kv in Globals.Matrices) Log.Info($"  global matrix {PropIds.Name(kv.Key)} = {kv.Value.ToString().Replace("\n", " | ")}");
+        if (log) Log.Info($"camera '{cam.GameObject.Name}' tag={cam.GameObject.Tag} enabled={cam.Enabled} depth={cam.Depth} mask={cam.CullingMask:x} ortho={cam.Orthographic} size={cam.OrthoSize} clear={cam.ClearFlags} bg={cam.Background} rect={cam.PixelRect} items={items.Count}");
         foreach (var it in items) {
             if (log) {
                 var mvp = M.Mul(Proj, M.Mul(View, it.R.DrawMatrix));
@@ -481,6 +490,8 @@ public static class Pipeline {
                 if (!PassRuns(pass)) { if (log) Log.Info($"    pass '{pass.Name}' skipped (LightMode {pass.Tags.GetValueOrDefault("LightMode")})"); continue; }
                 if (!BindPass(it.Mat, sh, pass, ctx)) { if (log) Log.Info("    pass bind failed"); continue; }
                 it.Mesh.Draw(it.Sub);
+                if (log && it.R is NSkinnedMeshRenderer skr && skr.SkinnedPositions is { Length: > 0 } sp)
+                    Log.Info($"    skinned v0={sp[0]} v1={sp[Math.Min(100, sp.Length - 1)]} bones={skr.Bones.Length} go={skr.GameObject.Transform.Position} scale={skr.GameObject.Transform.LossyScale}");
                 if (log) {
                     var tx = Textures.OfOrNull(it.Mat.Textures.GetValueOrDefault(PropIds.Id("_MainTex")));
                     Log.Info($"    drawn: glerr={GL.glGetError():x} tex gl={tx?.GlTex} {tx?.Width}x{tx?.Height} fmt={tx?.Format} mips={tx?.MipCount} px={(tx?.Pixels != null)} blend={pass.State.Blend?.Length} zt={pass.State.ZTest.Const} alpha={pass.State.AlphaTestFunc}");
@@ -616,10 +627,10 @@ public static class Pipeline {
 
         static NMaterial? blitMat;
 
-        static void BlitQuad(NTexture? src, NMaterial mat, int pass) {
+        static void BlitQuad(Texture? src, NMaterial mat, int pass) {
             var saved = (Model, View, Proj);
             Proj = Icalls.MathIcallsPublic.Ortho(0, 1, 0, 1, -1, 100); View = M.Identity; Model = M.Identity;
-            if (src != null) { mat.Textures[PropIds.Id("_MainTex")] = (Texture)src.Managed!; mat.TexST[PropIds.Id("_MainTex")] = new Vector4(1, 1, 0, 0); }
+            if (src != null) { mat.Textures[PropIds.Id("_MainTex")] = src; mat.TexST[PropIds.Id("_MainTex")] = new Vector4(1, 1, 0, 0); }
             var q = Quad();
             var sh = mat.Shader;
             if (sh != null) {
@@ -657,7 +668,7 @@ public static class Pipeline {
         static void Blit(Texture src, RenderTexture? dest) {
             if (!Device.Ready) return;
             RenderTargets.Set(dest == null ? null : (NRenderTexture)Textures.Of(dest));
-            BlitQuad(Textures.OfOrNull(src), BlitMaterial(), 0);
+            BlitQuad(src, BlitMaterial(), 0);
         }
 
         [Icall("UnityEngine.Graphics::Internal_BlitMaterial")]
@@ -665,7 +676,7 @@ public static class Pipeline {
             if (!Device.Ready) return;
             if (setRT) RenderTargets.Set(dest == null ? null : (NRenderTexture)Textures.Of(dest));
             var m = Materials.Of(mat);
-            if (m != null) BlitQuad(Textures.OfOrNull(src), m, pass);
+            if (m != null) BlitQuad(src, m, pass);
         }
 
         [Icall("UnityEngine.Graphics::Internal_BlitMultiTap")]
@@ -684,12 +695,17 @@ public static class Pipeline {
         [Icall("UnityEngine.Graphics::Internal_SetRandomWriteTargetRT")] static void SetRW(int i, RenderTexture rt) { }
 
         static NMesh? drawTexQuad;
+        static readonly bool traceDrawTex = Environment.GetEnvironmentVariable("FF9_TRACE_DRAWTEX") != null;
 
         [Icall("UnityEngine.Graphics::DrawTexture")]
         static unsafe void DrawTexture(ref DrawTexArgs a) {
             if (!Device.Ready) return;
             var tex = Textures.OfOrNull(a.texture);
             var mat = Materials.Of(a.mat) ?? BlitMaterial();
+            // PSX/BattleMap_TexAnim (the models' texture animation, e.g. blinking) only copies the
+            // texture; its vertex program pushes z=0 geometry past the far plane here
+            if (mat.Shader?.Name == "PSX/BattleMap_TexAnim") mat = BlitMaterial();
+            if (traceDrawTex) Log.Once("drawtex" + a.screenRect + (tex?.Id ?? 0), $"DrawTexture tex=#{tex?.Id} '{tex?.Name}' {tex?.Width}x{tex?.Height} px={tex?.Pixels != null} gl={tex?.GlTex} screen={a.screenRect} src={a.sourceRect} color={a.color} target={RenderTargets.Active?.Name} fbo={RenderTargets.CurrentFbo} shader={mat.Shader?.Name} proj={Proj.ToString().Replace("\n", " | ")}");
             var saved = (Model, View, Proj);
             // screen rect in GUI pixel coordinates (top-left origin) -> current projection is set by the caller (GL.LoadPixelMatrix)
             var r = a.screenRect; var s = a.sourceRect;
@@ -700,7 +716,7 @@ public static class Pipeline {
             var c32 = a.color;
             q.Colors = new[] { c32, c32, c32, c32 };
             q.Dirty = true;
-            if (tex != null) mat.Textures[PropIds.Id("_MainTex")] = (Texture)tex.Managed!;
+            if (tex != null) mat.Textures[PropIds.Id("_MainTex")] = a.texture;
             var sh = mat.Shader;
             if (sh != null) for (int i = 0; i < sh.Passes.Count; i++) { SetPass(mat, i); DrawMeshNow(q, Model, 0); }
             (Model, View, Proj) = saved;

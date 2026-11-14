@@ -83,7 +83,8 @@ public static class Cameras {
         };
     }
 
-    public static IEnumerable<NCamera> Live => All.Where(c => c.Managed != null && Registry.Get(c.Managed) == c);
+    /// Cameras in the scene (a prefab asset's camera never renders)
+    public static IEnumerable<NCamera> Live => All.Where(c => c.Managed != null && Registry.Get(c.Managed) == c && !c.GameObject.IsAsset);
 
     static NCamera C(Camera c) => Registry.Of<NCamera>(c);
 

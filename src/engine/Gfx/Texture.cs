@@ -42,8 +42,9 @@ public class NTexture : NObject {
 
     public unsafe void Upload() {
         if (!Device.Ready) return;
-        if (dumpTex != null && Pixels != null && Name.Contains(dumpTex))
-            Png.Write($"/data/local/tmp/ff9/shots/tex_{Name.Replace('/', '_')}_{Format}.png", Pixels, Width, Height, flipY: true);
+        if (dumpTex != null && Pixels == null) Log.Once("nopix" + Id, $"texture #{Id} '{Name}' {Width}x{Height} {Format} uploaded without pixels (asset={IsAsset})");
+        if (dumpTex != null && Pixels != null && (Name.Contains(dumpTex) || dumpTex == "#" + Id))
+            Png.Write($"/data/local/tmp/ff9/shots/tex_{Id}_{Name.Replace('/', '_')}_{Format}.png", Pixels, Width, Height, flipY: true);
         if (GlTex == 0) GlTex = GL.GenTexture();
         Core.GpuStats.TexUploads++; Core.GpuStats.LastTex = Name;
         GL.glBindTexture(GL.TEXTURE_2D, GlTex);

@@ -62,6 +62,7 @@ public static unsafe class Device {
         GL.glBindFramebuffer(GL.FRAMEBUFFER, 0);
         GL.glPixelStorei(GL.PACK_ALIGNMENT, 1);
         fixed (byte* p = px) GL.glReadPixels(0, 0, Width, Height, GL.RGBA, GL.UNSIGNED_BYTE, p);
+        for (int i = 3; i < px.Length; i += 4) px[i] = 255;     // what the display shows: no alpha
         Png.Write(path, px, Width, Height, flipY: true);
         Log.Info($"screenshot {path}");
     }

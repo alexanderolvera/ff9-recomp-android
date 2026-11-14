@@ -54,7 +54,11 @@ JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRun(JNIEnv *env, jc
     char *args[] = {"ff9", strdup(dir), "play", NULL};
     (*env)->ReleaseStringUTFChars(env, jdir, dir);
     (*env)->ReleaseStringUTFChars(env, jlog, logp);
-    return ff9_main(3, args);
+    int r = ff9_main(3, args);
+    /* the game quit: end the game process (":game") without running static destructors
+       while the runtime's and the audio threads are still alive */
+    fflush(stdout); fflush(stderr);
+    _exit(r);
 }
 
 JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativePad(JNIEnv *env, jclass cls, jint buttons, jint lt, jint rt, jint lx, jint ly, jint rx, jint ry) {

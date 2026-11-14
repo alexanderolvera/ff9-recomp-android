@@ -19,6 +19,9 @@ public static class Log {
         Console.WriteLine($"EXCEPTION in {where}: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
         for (var inner = e.InnerException; inner != null; inner = inner.InnerException)
             Console.WriteLine($"  inner {inner.GetType().Name}: {inner.Message}\n{inner.StackTrace}");
+        if (Environment.GetEnvironmentVariable("FF9_EXC_OFFSETS") != null)
+            foreach (var f in new System.Diagnostics.StackTrace(e, false).GetFrames())
+                Console.WriteLine($"   frame {f.GetMethod()?.DeclaringType?.Name}.{f.GetMethod()?.Name} IL_{f.GetILOffset():x4} native+{f.GetNativeOffset():x}");
         if (Environment.GetEnvironmentVariable("FF9_STOP_ON_EXCEPTION") != null) Environment.Exit(3);
     }
 }

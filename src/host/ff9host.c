@@ -355,5 +355,7 @@ __attribute__((visibility("default"))) int ff9_main(int argc, char **argv) {
 }
 
 #ifndef FF9_LIBRARY
-int main(int argc, char **argv) { return ff9_main(argc, argv); }
+/* _exit: the runtime's and the audio threads are still running, and static destructors
+   racing them abort the process ("pthread_mutex_lock called on a destroyed mutex") */
+int main(int argc, char **argv) { int r = ff9_main(argc, argv); fflush(stdout); fflush(stderr); _exit(r); }
 #endif

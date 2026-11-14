@@ -170,7 +170,8 @@ public static class Fields {
         if (t == typeof(Bounds)) { var c = r.V3(); var e = r.V3(); return new Bounds(c, e * 2); }
         if (t == typeof(Matrix4x4)) {
             var m = new Matrix4x4();
-            unsafe { float* p = (float*)&m; for (int i = 0; i < 16; i++) p[i] = r.F32(); }
+            for (int row = 0; row < 4; row++)          // serialized by row (e00 e01 ...)
+                for (int col = 0; col < 4; col++) m[row, col] = r.F32();
             return m;
         }
         if (t == typeof(RectOffset)) {

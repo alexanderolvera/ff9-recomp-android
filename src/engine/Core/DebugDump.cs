@@ -35,6 +35,17 @@ public static class DebugDump {
         if (probe && Clock.Frame % 500 == 250) Probe();
         if (!frames.Contains(Clock.Frame)) return;
         Console.WriteLine($"==== frame {Clock.Frame} t={Clock.Now:F2}");
+        if (Environment.GetEnvironmentVariable("FF9_DUMP_RT") is { } rtName)
+            foreach (var o in Registry.All.ToList())
+                if (o is Gfx.NRenderTexture rt && rt.Created && rt.Name.Contains(rtName)) unsafe {
+                    var px = new byte[rt.Width * rt.Height * 4];
+                    Gfx.GL.glBindFramebuffer(Gfx.GL.FRAMEBUFFER, rt.Fbo);
+                    Gfx.GL.glPixelStorei(Gfx.GL.PACK_ALIGNMENT, 1);
+                    fixed (byte* p = px) Gfx.GL.glReadPixels(0, 0, rt.Width, rt.Height, Gfx.GL.RGBA, Gfx.GL.UNSIGNED_BYTE, p);
+                    Gfx.GL.glBindFramebuffer(Gfx.GL.FRAMEBUFFER, Gfx.RenderTargets.CurrentFbo);
+                    Gfx.Png.Write($"/data/local/tmp/ff9/shots/rt_{rt.Id}.png", px, rt.Width, rt.Height, flipY: true);
+                    Console.WriteLine($"dumped render texture #{rt.Id} '{rt.Name}'");
+                }
         if (goFilter != null) {
             foreach (var mb in Player.Behaviours.ToList())
                 if (mb.Managed != null && mb.GameObject.Name == goFilter && mb.GameObject.ActiveInHierarchy) Inspect(mb);

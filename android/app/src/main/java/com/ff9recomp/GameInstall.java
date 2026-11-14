@@ -40,10 +40,14 @@ final class GameInstall {
         return new File(game, "x64/FF9_Data/mainData").isFile();
     }
 
-    boolean hasMoguri() {
+    boolean hasMoguri() { return moguriFolder() != null; }
+
+    /** The Moguri Mod folder (Memoria's mod manager installs it as "MoguriMain"). */
+    String moguriFolder() {
+        if (new File(game, "MoguriMain").isDirectory()) return "MoguriMain";
         File[] l = game.listFiles();
-        if (l != null) for (File f : l) if (f.isDirectory() && f.getName().toLowerCase().contains("moguri")) return true;
-        return false;
+        if (l != null) for (File f : l) if (f.isDirectory() && f.getName().toLowerCase().startsWith("moguri")) return f.getName();
+        return null;
     }
 
     static final String[] REQUIRED = {
@@ -110,6 +114,12 @@ final class GameInstall {
         if (!ini.isFile()) return;
         String s = new String(Files.readAllBytes(ini.toPath()), StandardCharsets.UTF_8);
         s = s.replaceAll("(?m)^Backend\\s*=\\s*\\d+", "Backend = 2");
+        // a Moguri Mod folder copied in but not enabled: enable it as Memoria's mod manager does
+        String moguri = moguriFolder();
+        if (moguri != null && java.util.regex.Pattern.compile("(?m)^FolderNames\\s*=\\s*$").matcher(s).find()) {
+            s = s.replaceFirst("(?m)^FolderNames\\s*=\\s*$", "FolderNames = \"" + moguri + "\"");
+            s = s.replaceFirst("(?m)^TileSize\\s*=\\s*32\\s*$", "TileSize = 64");
+        }
         Files.write(ini.toPath(), s.getBytes(StandardCharsets.UTF_8));
     }
 

@@ -18,10 +18,13 @@ public class NRenderer : NComponent {
     public virtual NMesh? DrawMesh => null;
     public virtual Matrix4x4 DrawMatrix => GameObject.Transform.LocalToWorld;
     public bool Instanced;      // Renderer.material made per-renderer copies
+    /// The copies Renderer.material made for this renderer (returned again, not copied again).
+    public readonly HashSet<Material> Own = new(ReferenceEqualityComparer.Instance);
 }
 
 public sealed class NMeshFilter : NComponent {
     public Mesh? Mesh;
+    public Mesh? Own;           // the copy MeshFilter.mesh made (returned again, not copied again)
 }
 
 public sealed class NMeshRenderer : NRenderer {
@@ -65,6 +68,7 @@ public sealed class NSkinnedMeshRenderer : NRenderer {
     public Transform? RootBone;
     public Bounds LocalBounds;
     Vector3[]? skinned, skinnedN;
+    public Vector3[]? SkinnedPositions => skinned;
 
     public override NMesh? DrawMesh => Meshes.Of(Mesh);
 
@@ -216,8 +220,9 @@ public static class RendererComponents {
     static Material? Instance(NRenderer x, int i) {
         var m = x.Materials[i];
         if (m == null) return null;
-        if (x.Instanced && Materials.Of(m) is { } nm && !nm.IsAsset) return m;
+        if (x.Own.Contains(m)) return m;
         var copy = (Material)Cloner.Clone(m, null, null);
+        x.Own.Add(copy);
         Registry.Get(copy)!.Name = (Registry.Get(m)?.Name ?? "") + " (Instance)";
         x.Materials[i] = copy;
         return copy;
@@ -287,7 +292,9 @@ public static class RendererComponents {
     [Icall("UnityEngine.MeshFilter::get_mesh")]
     static Mesh? GetMesh(MeshFilter f) {
         var x = F(f);
-        if (x.Mesh != null && Registry.Get(x.Mesh)?.IsAsset == true) x.Mesh = (Mesh)Cloner.Clone(x.Mesh, null, null);
+        // Unity: no mesh -> a new empty one; a shared mesh -> this filter's own copy, made once
+        if (x.Mesh is null || Registry.Get(x.Mesh) == null) x.Mesh = x.Own = new Mesh();
+        else if (!ReferenceEquals(x.Mesh, x.Own) && Registry.Get(x.Mesh)!.IsAsset) x.Mesh = x.Own = (Mesh)Cloner.Clone(x.Mesh, null, null);
         return x.Mesh;
     }
     [Icall("UnityEngine.MeshFilter::set_mesh")] static void SetMesh(MeshFilter f, Mesh m) => F(f).Mesh = m;

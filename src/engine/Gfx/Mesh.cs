@@ -154,8 +154,10 @@ public static class Meshes {
         if (nbind > 0) {
             m.BindPoses = new Matrix4x4[nbind];
             for (int i = 0; i < nbind; i++) {
+                // serialized e00 e01 e02 e03 e10 ... (by row); Matrix4x4's fields go by column
                 var mm = new Matrix4x4();
-                unsafe { float* p = (float*)&mm; for (int k = 0; k < 16; k++) p[k] = r.F32(); }
+                for (int row = 0; row < 4; row++)
+                    for (int col = 0; col < 4; col++) mm[row, col] = r.F32();
                 m.BindPoses[i] = mm;
             }
         }

@@ -167,6 +167,9 @@ public static class Player {
         GpuStats.VboUploads = GpuStats.IboUploads = GpuStats.TexUploads = GpuStats.RtCreates = 0;
         if (System.Runtime.InteropServices.NativeLibrary.TryGetExport(Native.DllImports.Host, "ff9_gl_stats", out var glStats))
             unsafe { ((delegate* unmanaged<void>)glStats)(); }
+        if (Environment.GetEnvironmentVariable("FF9_MEMSTAT_TYPES") != null)
+            Log.Info("   objects by type: " + string.Join(", ", Registry.All.GroupBy(o => o is Assets.NAsset a ? "NAsset:" + a.Data?.GetType().Name : o.GetType().Name + (o is NGameObject g ? ":" + g.Name : ""))
+                .OrderByDescending(g => g.Count()).Take(10).Select(g => $"{g.Key} {g.Count()}")));
         Log.Info($"mem f{Clock.Frame}: gc {GC.GetTotalMemory(false) >> 20} MB (gen0 {GC.CollectionCount(0)}, gen2 {GC.CollectionCount(2)}), rss {rss}, vsz {vsz}, maps {maps}, behaviours {Behaviours.Count}, objects {Registry.Count}");
     }
 
