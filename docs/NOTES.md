@@ -117,3 +117,17 @@
   android_jni.c); Gfx/Device.ChangeWindow drops the EGL surface, waits (SoLoud muted), recreates it.
 - Select+Start held 1 s: Leave dialog (the game sees neither button while both are held).
 - Report a problem: zip with ff9.log (+prev), Memoria.log/.ini, java-crash.txt, tombstone/ANR records.
+- Launcher: FF7Recomp's layout (commands left, help line top, page window right) in FF9 colours.
+- Mods: Memoria's catalog (files/mods/catalog.xml); installs into game/<InstallationPath>, FolderNames
+  ordered by catalog priority; .7z unpacked by src/launcher/un7z.c (libff9launcher.so, LZMA SDK).
+- Save states: copies of Memoria's autosave (files/savestates/slotN.dat); resume = restore +
+  -memoria-autoload (start of the place, not the exact moment). Select+R1 in game.
+- Achievements: steamwrapper stand-in (src/host/win32.c) reports Steam ready, answers the stats
+  callbacks and appends unlocks to files/achievements.txt (FF9_ACHIEVEMENTS); SteamLink syncs (app 377840).
+- Menu sounds: Core/UiSounds.cs writes sound ids 101-103 (cancel, buzzer, cursor) as Ogg to files/ui-sounds.
+- Second screen: Core/Companion.cs JSON (FF9_COMPANION) -> CompanionView; Select+L1 swaps in the guide page.
+- adb: `am start ... --ez test_play true --es test_args "-memoria-battle 336"`; TestControl SET takes guide_url.
+- Tested 2026-11-14: Masked Man, Alexandria (meeting-room dialogue choice loops on the wrong answer, by
+  design), in-game menu and Item screen, Smooth 60 fields and battles, battles 4 6 21 52 73 300 clean.
+- Rumble: the game calls XInputGamePadSetState only where a scene has a vibration track (none seen yet;
+  the host logs "rumble l r").
