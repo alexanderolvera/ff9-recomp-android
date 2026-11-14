@@ -3,6 +3,7 @@
 // match the internal call (instance calls take the object first). The host registers the
 // compiled code of these methods as the internal calls.
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -41,7 +42,7 @@ public static class Entry {
     public static int Play() {
         Console.WriteLine("args: " + string.Join(" ", Environment.GetCommandLineArgs()));
         typeof(Environment).GetField("s_commandLineArgs", BindingFlags.Static | BindingFlags.NonPublic)
-            ?.SetValue(null, new[] { "FF9.exe", "-runbylauncher" });
+            ?.SetValue(null, EnvironmentIcalls.Args);
         try {
             return Core.Player.Main(Array.Empty<string>());
         } catch (Exception e) {
@@ -54,5 +55,15 @@ public static class Entry {
 static class EnvironmentIcalls {
     /// The PC launcher starts the game with these; AppArgumentsCheck quits without them.
     [Icall("System.Environment::GetCommandLineArgs")]
-    static string[] GetCommandLineArgs() => new[] { "FF9.exe", "-runbylauncher" };
+    static string[] GetCommandLineArgs() => Args;
+
+    /// The game's command line; FF9_ARGS adds arguments (e.g. "-memoria-battle 1 -memoria-party 0,1")
+    public static string[] Args {
+        get {
+            var a = new List<string> { "FF9.exe", "-runbylauncher" };
+            if (Environment.GetEnvironmentVariable("FF9_ARGS") is { Length: > 0 } extra)
+                a.AddRange(extra.Split(new[] { ' ', '+' }, StringSplitOptions.RemoveEmptyEntries));   // '+' too: test env strings have no spaces
+            return a.ToArray();
+        }
+    }
 }
