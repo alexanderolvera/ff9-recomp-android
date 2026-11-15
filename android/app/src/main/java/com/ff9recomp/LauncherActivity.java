@@ -241,10 +241,10 @@ public class LauncherActivity extends Activity {
 
     private static final String[][] GROUPS = {
         { "Frame rate", "fps" },
-        { "Display", "widescreen", "skip_intros", "crt_filter", "show_fps" },
+        { "Display", "resolution", "widescreen", "skip_intros", "crt_filter", "show_fps" },
         { "Game", "start", "boosters", "speed", "turbo_dialog" },
         { "Controls", "swap_confirm", "analog_run", "touch_controls", "rumble" },
-        { "Screens", "bottom_screen", "swap_screens" },
+        { "Screens", "bottom_screen", "bottom_buttons", "swap_screens" },
         { "Sound", "menu_sounds", "music_volume", "sound_volume" },
     };
 
@@ -253,6 +253,7 @@ public class LauncherActivity extends Activity {
         switch (key) {
             case "fps": return new String[] { "As shipped: fields 30, battles 15", "Memoria fills in frames: everything at 60", "Fields and battles at 120 (experimental, warmer)" }[i];
             case "start": return new String[] { "As shipped", "Straight back to the place you were last" }[i];
+            case "resolution": return new String[] { "The screen's own", "Cooler, a little softer", "Coolest, for weaker devices" }[i];
             case "touch_controls": return new String[] { "Only when no controller is connected", "Always on screen", "Never" }[i];
             default: return null;
         }

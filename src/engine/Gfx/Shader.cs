@@ -60,6 +60,10 @@ public sealed class SubProgram {
     public readonly List<(string kind, int reg, string name, int rows)> Consts = new();   // Matrix/Vector/Float
     public readonly List<(int reg, string name, string dim)> Textures = new();
     public D3D9Program? Translated;
+    // per constant, resolved once (Pipeline.FillConsts): its property id and whether it may be a
+    // built-in (unity_*, glstate_*, _Time...), so draws do not look names up again
+    public int[]? ConstIds;
+    public bool[]? ConstMaybeBuiltin;
 }
 
 public sealed class ShaderPass {

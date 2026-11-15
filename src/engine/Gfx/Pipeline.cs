@@ -212,10 +212,13 @@ public static class Pipeline {
         return r;
     }
 
-    static Vector4 VectorFor(string name, DrawCtx c) {
-        var b = Builtin(name, c, out bool found);
-        if (found) return b;
-        int id = PropIds.Id(name);
+    static Vector4 VectorFor(string name, DrawCtx c) => VectorFor(name, PropIds.Id(name), true, c);
+
+    static Vector4 VectorFor(string name, int id, bool maybeBuiltin, DrawCtx c) {
+        if (maybeBuiltin) {
+            var b = Builtin(name, c, out bool found);
+            if (found) return b;
+        }
         // materials read before their shader was parsed get the Properties defaults on first use
         if (c.Mat != null && !c.Mat.DefaultsApplied) c.Mat.ApplyShaderDefaults();
         if (c.Block != null && c.Block.Vectors.TryGetValue(id, out var bv)) return bv;
@@ -253,7 +256,20 @@ public static class Pipeline {
     [ThreadStatic] public static bool LogConsts;
     static unsafe void FillConsts(SubProgram sp, float[] buf, int count, DrawCtx c) {
         Array.Clear(buf, 0, count * 4);
+        if (sp.ConstIds == null) {
+            var ids = new int[sp.Consts.Count];
+            var bi = new bool[sp.Consts.Count];
+            for (int i = 0; i < ids.Length; i++) {
+                string n = sp.Consts[i].name;
+                ids[i] = PropIds.Id(n);
+                try { Builtin(n, new DrawCtx(), out bi[i]); } catch { bi[i] = true; }    // a name the built-in table knows
+            }
+            sp.ConstMaybeBuiltin = bi;
+            sp.ConstIds = ids;
+        }
+        int ci = -1;
         foreach (var (kind, reg, name, rows) in sp.Consts) {
+            ci++;
             if (kind == "Matrix") {
                 MatrixFor(name, c, out var m);
                 for (int r = 0; r < rows && reg + r < count; r++) {
@@ -261,7 +277,7 @@ public static class Pipeline {
                     buf[o] = m[r, 0]; buf[o + 1] = m[r, 1]; buf[o + 2] = m[r, 2]; buf[o + 3] = m[r, 3];
                 }
             } else if (reg < count) {
-                var v = VectorFor(name, c);
+                var v = VectorFor(name, sp.ConstIds[ci], sp.ConstMaybeBuiltin![ci], c);
                 if (LogConsts) Log.Info($"    const {kind} c{reg} {name} = {v}");
                 int o = reg * 4;
                 buf[o] = v.x; buf[o + 1] = v.y; buf[o + 2] = v.z; buf[o + 3] = v.w;
@@ -270,14 +286,14 @@ public static class Pipeline {
     }
 
     // ---- state ----
-    static uint BlendFactor(string s) => s.ToLowerInvariant() switch {
+    static uint BlendFactor(string s) => (s.Length <= 2 ? s : s.ToLowerInvariant()) switch {
         "zero" or "0" => GL.ZERO, "one" or "1" => GL.ONE, "srccolor" or "3" => GL.SRC_COLOR, "oneminussrccolor" or "6" => GL.ONE_MINUS_SRC_COLOR,
         "srcalpha" or "5" => GL.SRC_ALPHA, "oneminussrcalpha" or "10" => GL.ONE_MINUS_SRC_ALPHA, "dstcolor" or "2" => GL.DST_COLOR,
         "oneminusdstcolor" or "4" => GL.ONE_MINUS_DST_COLOR, "dstalpha" or "7" => GL.DST_ALPHA, "oneminusdstalpha" or "8" => GL.ONE_MINUS_DST_ALPHA,
         "srcalphasaturate" or "9" => GL.SRC_ALPHA_SATURATE, _ => GL.ONE,
     };
 
-    static uint CompareFunc(string s) => s.ToLowerInvariant() switch {
+    static uint CompareFunc(string s) => (s.Length <= 2 ? s : s.ToLowerInvariant()) switch {
         "never" or "1" => GL.NEVER, "less" or "2" => GL.LESS, "equal" or "3" => GL.EQUAL, "lequal" or "4" => GL.LEQUAL, "greater" or "5" => GL.GREATER,
         "notequal" or "6" => GL.NOTEQUAL, "gequal" or "7" => GL.GEQUAL, "always" or "8" or "0" or "disabled" => GL.ALWAYS, _ => GL.LEQUAL,
     };
@@ -287,33 +303,57 @@ public static class Pipeline {
         _ => GL.KEEP,
     };
 
+    static bool Is(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    // the GL state last set by ApplyState, so unchanged state is not sent again; Reset() whenever
+    // other code may have touched GL (each camera's draw loop starts with it)
+    static class Shadow {
+        public static int Cull, DepthMask, DepthFunc, Blend, Sc, Dc, Sa, Da, Op, Mask, Offset, Stencil, Program;
+        public static float OffF, OffU;
+        public static void Reset() { Cull = DepthMask = DepthFunc = Blend = Sc = Dc = Sa = Da = Op = Mask = Offset = Stencil = Program = -1; }
+    }
+
     static void ApplyState(PassState s, NMaterial? m) {
-        string cull = s.Cull.Resolve(m).ToLowerInvariant();
-        if (cull is "off" or "0") GL.glDisable(GL.CULL_FACE);
-        else { GL.glEnable(GL.CULL_FACE); GL.glCullFace(cull is "front" or "1" ? GL.FRONT : GL.BACK); }
-        GL.glFrontFace(GL.CW);
-        string zw = s.ZWrite.Resolve(m).ToLowerInvariant();
-        GL.glDepthMask((byte)(zw is "off" or "0" ? 0 : 1));
-        string zt = s.ZTest.Resolve(m);
-        GL.glEnable(GL.DEPTH_TEST);
-        GL.glDepthFunc(CompareFunc(zt));
-        if (s.Blend == null) GL.glDisable(GL.BLEND);
-        else {
-            uint sc = BlendFactor(s.Blend[0].Resolve(m)), dc = BlendFactor(s.Blend[1].Resolve(m));
-            uint sa = s.Blend.Length > 2 ? BlendFactor(s.Blend[2].Resolve(m)) : sc, da = s.Blend.Length > 2 ? BlendFactor(s.Blend[3].Resolve(m)) : dc;
-            if (sc == GL.ONE && dc == GL.ZERO && sa == GL.ONE && da == GL.ZERO) GL.glDisable(GL.BLEND);
-            else {
-                GL.glEnable(GL.BLEND);
-                GL.glBlendFuncSeparate(sc, dc, sa, da);
-                uint op = s.BlendOp.Resolve(m).ToLowerInvariant() switch { "sub" or "1" => GL.FUNC_SUBTRACT, "revsub" or "2" => GL.FUNC_REVERSE_SUBTRACT, "min" or "3" => GL.MIN, "max" or "4" => GL.MAX, _ => GL.FUNC_ADD };
-                GL.glBlendEquationSeparate(op, op);
-            }
+        string cull = s.Cull.Resolve(m);
+        int cullV = Is(cull, "off") || cull == "0" ? 0 : Is(cull, "front") || cull == "1" ? 1 : 2;
+        if (cullV != Shadow.Cull) {
+            if (cullV == 0) GL.glDisable(GL.CULL_FACE);
+            else { GL.glEnable(GL.CULL_FACE); GL.glCullFace(cullV == 1 ? GL.FRONT : GL.BACK); }
+            if (Shadow.Cull == -1) GL.glFrontFace(GL.CW);
+            Shadow.Cull = cullV;
         }
-        string cm = s.ColorMask.ToUpperInvariant();
-        if (cm == "0") GL.glColorMask(0, 0, 0, 0);
-        else GL.glColorMask((byte)(cm.Contains('R') ? 1 : 0), (byte)(cm.Contains('G') ? 1 : 0), (byte)(cm.Contains('B') ? 1 : 0), (byte)(cm.Contains('A') ? 1 : 0));
-        if (s.HasOffset) { GL.glEnable(GL.POLYGON_OFFSET_FILL); GL.glPolygonOffset(s.OffsetFactor, s.OffsetUnits); }
-        else GL.glDisable(GL.POLYGON_OFFSET_FILL);
+        string zw = s.ZWrite.Resolve(m);
+        int zwV = Is(zw, "off") || zw == "0" ? 0 : 1;
+        if (zwV != Shadow.DepthMask) { GL.glDepthMask((byte)zwV); Shadow.DepthMask = zwV; }
+        int zf = (int)CompareFunc(s.ZTest.Resolve(m));
+        if (zf != Shadow.DepthFunc) {
+            if (Shadow.DepthFunc == -1) GL.glEnable(GL.DEPTH_TEST);
+            GL.glDepthFunc((uint)zf);
+            Shadow.DepthFunc = zf;
+        }
+        int blendOn = 0, sc = 0, dc = 0, sa = 0, da = 0, op = 0;
+        if (s.Blend != null) {
+            sc = (int)BlendFactor(s.Blend[0].Resolve(m)); dc = (int)BlendFactor(s.Blend[1].Resolve(m));
+            sa = s.Blend.Length > 2 ? (int)BlendFactor(s.Blend[2].Resolve(m)) : sc; da = s.Blend.Length > 2 ? (int)BlendFactor(s.Blend[3].Resolve(m)) : dc;
+            blendOn = sc == GL.ONE && dc == GL.ZERO && sa == GL.ONE && da == GL.ZERO ? 0 : 1;
+            string bo = s.BlendOp.Resolve(m);
+            op = (int)(Is(bo, "sub") || bo == "1" ? GL.FUNC_SUBTRACT : Is(bo, "revsub") || bo == "2" ? GL.FUNC_REVERSE_SUBTRACT : Is(bo, "min") || bo == "3" ? GL.MIN : Is(bo, "max") || bo == "4" ? GL.MAX : GL.FUNC_ADD);
+        }
+        if (blendOn != Shadow.Blend) { if (blendOn == 0) GL.glDisable(GL.BLEND); else GL.glEnable(GL.BLEND); Shadow.Blend = blendOn; }
+        if (blendOn == 1 && (sc != Shadow.Sc || dc != Shadow.Dc || sa != Shadow.Sa || da != Shadow.Da)) {
+            GL.glBlendFuncSeparate((uint)sc, (uint)dc, (uint)sa, (uint)da);
+            Shadow.Sc = sc; Shadow.Dc = dc; Shadow.Sa = sa; Shadow.Da = da;
+        }
+        if (blendOn == 1 && op != Shadow.Op) { GL.glBlendEquationSeparate((uint)op, (uint)op); Shadow.Op = op; }
+        string cm = s.ColorMask;
+        int mask = cm == "0" ? 0 : (cm.Contains('R') || cm.Contains('r') ? 1 : 0) | (cm.Contains('G') || cm.Contains('g') ? 2 : 0) | (cm.Contains('B') || cm.Contains('b') ? 4 : 0) | (cm.Contains('A') || cm.Contains('a') ? 8 : 0);
+        if (mask != Shadow.Mask) { GL.glColorMask((byte)(mask & 1), (byte)(mask >> 1 & 1), (byte)(mask >> 2 & 1), (byte)(mask >> 3 & 1)); Shadow.Mask = mask; }
+        int off = s.HasOffset ? 1 : 0;
+        if (off != Shadow.Offset || (off == 1 && (s.OffsetFactor != Shadow.OffF || s.OffsetUnits != Shadow.OffU))) {
+            if (off == 1) { GL.glEnable(GL.POLYGON_OFFSET_FILL); GL.glPolygonOffset(s.OffsetFactor, s.OffsetUnits); }
+            else GL.glDisable(GL.POLYGON_OFFSET_FILL);
+            Shadow.Offset = off; Shadow.OffF = s.OffsetFactor; Shadow.OffU = s.OffsetUnits;
+        }
         if (s.StencilEnabled) {
             GL.glEnable(GL.STENCIL_TEST);
             int rf = (int)float.Parse(s.StencilRef.Resolve(m), System.Globalization.CultureInfo.InvariantCulture);
@@ -322,7 +362,8 @@ public static class Pipeline {
             GL.glStencilFunc(CompareFunc(s.StencilComp.Resolve(m)), rf, rm);
             GL.glStencilOp(StencilOp(s.StencilFail.Resolve(m)), StencilOp(s.StencilZFail.Resolve(m)), StencilOp(s.StencilPass.Resolve(m)));
             GL.glStencilMask(wm);
-        } else GL.glDisable(GL.STENCIL_TEST);
+            Shadow.Stencil = 1;
+        } else if (Shadow.Stencil != 0) { GL.glDisable(GL.STENCIL_TEST); Shadow.Stencil = 0; }
     }
 
     static HashSet<string> ActiveKeywords(NMaterial? m) {
@@ -341,15 +382,33 @@ public static class Pipeline {
     }
 
     /// Binds a pass's program, state, textures and constants. Returns false when it can't draw.
+    // the variant chosen for a pass and material, kept while their keywords stay the same
+    sealed class Variant { public SubProgram? Vp, Fp; public int Sig = int.MinValue; }
+    static readonly Dictionary<(ShaderPass, NMaterial?), Variant> variants = new();
+
+    static int KeywordSig(NMaterial? m) {
+        int h = Globals.Keywords.Count * 7919;
+        foreach (var k in Globals.Keywords) h ^= k.GetHashCode();
+        if (m != null) { h += m.Keywords.Count * 104729; foreach (var k in m.Keywords) h ^= k.GetHashCode() * 31; }
+        return h;
+    }
+
     static unsafe bool BindPass(NMaterial? mat, NShader sh, ShaderPass pass, DrawCtx ctx) {
-        var kw = ActiveKeywords(mat);
-        var vp = pass.Vp.Count > 0 ? Shaders.Choose(pass.Vp, kw) : null;
-        var fp = pass.Fp.Count > 0 ? Shaders.Choose(pass.Fp, kw) : null;
+        int sig = KeywordSig(mat);
+        if (!variants.TryGetValue((pass, mat), out var vr)) variants[(pass, mat)] = vr = new Variant();
+        if (vr.Sig != sig) {
+            var kw = ActiveKeywords(mat);
+            vr.Vp = pass.Vp.Count > 0 ? Shaders.Choose(pass.Vp, kw) : null;
+            vr.Fp = pass.Fp.Count > 0 ? Shaders.Choose(pass.Fp, kw) : null;
+            vr.Sig = sig;
+        }
+        var vp = vr.Vp;
+        var fp = vr.Fp;
         string? alpha = pass.State.AlphaTestFunc;
         if (alpha != null && alpha.ToLowerInvariant() == "always") alpha = null;
         var gp = GetProgram(pass, vp, fp, alpha);
         if (gp.Failed || gp.Id == 0) return false;
-        GL.glUseProgram(gp.Id);
+        if (Shadow.Program != (int)gp.Id) { GL.glUseProgram(gp.Id); Shadow.Program = (int)gp.Id; }
         ApplyState(pass.State, mat);
         if (gp.AlphaRefLoc >= 0) {
             float aref = float.TryParse(pass.State.AlphaTestRef.Resolve(mat), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ar) ? ar : 0;
@@ -381,7 +440,7 @@ public static class Pipeline {
     static void Uniform1f(int loc, float v) => glUniform1f(loc, v);
 
     // ---- camera rendering ----
-    sealed class DrawItem { public NRenderer R = null!; public NMesh Mesh = null!; public int Sub; public NMaterial Mat = null!; public int Queue; public float Dist; public int Order; public int Seq; }
+    sealed class DrawItem { public NRenderer R = null!; public NMesh Mesh = null!; public int Sub; public NMaterial Mat = null!; public int Queue; public float Dist; public int Order; public int Seq; public Matrix4x4 Model; }
 
     static readonly int SkipQueue = int.TryParse(Environment.GetEnvironmentVariable("FF9_SKIP_Q"), out var sq) ? sq : -1;
     static readonly int OnlyQueue = int.TryParse(Environment.GetEnvironmentVariable("FF9_ONLY_Q"), out var oq) ? oq : -1;
@@ -390,8 +449,43 @@ public static class Pipeline {
     public static readonly bool DumpGlsl = Environment.GetEnvironmentVariable("FF9_DUMP_GLSL") != null;
     public static readonly int DrawLogFrame = int.TryParse(Environment.GetEnvironmentVariable("FF9_DRAWLOG"), out var f) ? f : -1;
 
+    static readonly bool NoCull = Environment.GetEnvironmentVariable("FF9_NO_CULL") != null;
+    static int culled;
+    public static int LastCulled;
+
+    /// All eight corners of the mesh's bounds outside one clip plane (in clip space: x < -w,
+    /// x > w, y < -w, y > w, z < -w (GL near), z > w (far)).
+    static bool Outside(NMesh mesh, Matrix4x4 model, Matrix4x4 viewProj) {
+        var b = mesh.Bounds;
+        if (b.size.x == 0 && b.size.y == 0 && b.size.z == 0) return false;
+        var mvp = M.Mul(viewProj, model);
+        Vector3 mn = b.min, mx = b.max;
+        int all = 0x3F;
+        for (int i = 0; i < 8; i++) {
+            float x = (i & 1) != 0 ? mx.x : mn.x, y = (i & 2) != 0 ? mx.y : mn.y, z = (i & 4) != 0 ? mx.z : mn.z;
+            float cx = mvp.m00 * x + mvp.m01 * y + mvp.m02 * z + mvp.m03;
+            float cy = mvp.m10 * x + mvp.m11 * y + mvp.m12 * z + mvp.m13;
+            float cz = mvp.m20 * x + mvp.m21 * y + mvp.m22 * z + mvp.m23;
+            float cw = mvp.m30 * x + mvp.m31 * y + mvp.m32 * z + mvp.m33;
+            int o = 0;
+            if (cx < -cw) o |= 1; if (cx > cw) o |= 2;
+            if (cy < -cw) o |= 4; if (cy > cw) o |= 8;
+            if (cz < -cw) o |= 16; if (cz > cw) o |= 32;
+            all &= o;
+            if (all == 0) return false;
+        }
+        return all != 0;
+    }
+
+    public static long ProfBind, ProfDraw, ProfGather;
+    static int epoch;
+    static int drawCount;
+    public static int LastDrawCount;
+
     public static void RenderFrame() {
         if (!Device.Ready) return;
+        LastDrawCount = drawCount; drawCount = 0;
+        LastCulled = culled; culled = 0;
         var cams = Cameras.Live.Where(c => c.Enabled && c.GameObject.ActiveInHierarchy).OrderBy(c => c.Target != null ? 0 : 1).ThenBy(c => c.Depth).ToList();
         RenderTargets.Set(null);
         if (cams.Count == 0) { GL.glClearColor(0, 0, 0, 1); GL.glClear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT); }
@@ -442,8 +536,11 @@ public static class Pipeline {
         CameraPos = cam.GameObject.Transform.Position;
         SendToCamera(cam, "OnPreRender");
 
+        long g0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        NTransform.CacheEpoch = ++epoch == 0 ? ++epoch : epoch;   // no script runs until the sort is done
         var items = new List<DrawItem>();
         int seq = 0;
+        var viewProj = M.Mul(Proj, View);
         RendererComponents.All.RemoveAll(r => r.Managed == null || Registry.Get(r.Managed) != r);
         foreach (var r in RendererComponents.All) {
             r.IsVisible = false;
@@ -451,6 +548,11 @@ public static class Pipeline {
             if ((cam.CullingMask & (1 << r.GameObject.Layer)) == 0) continue;
             var mesh = r.DrawMesh;
             if (mesh == null || mesh.Vertices.Length == 0) continue;
+            // off the camera's view: skipped, as Unity culls by bounds (the world map's blocks
+            // behind the camera were more than half its draws). Mesh renderers only; skinned and
+            // particle renderers move their vertices and are drawn as before.
+            var model = r.DrawMatrix;
+            if (r is NMeshRenderer && !NoCull && Outside(mesh, model, viewProj)) { culled++; continue; }
             r.IsVisible = true;
             var pos = r.GameObject.Transform.Position;
             var vpos = M.MulPoint(View, pos);
@@ -458,7 +560,7 @@ public static class Pipeline {
                 var mat = i < r.Materials.Length ? Materials.Of(r.Materials[i]) : null;
                 if (mat == null) continue;
                 int sub = Math.Min(i, mesh.SubMeshes.Count - 1);
-                items.Add(new DrawItem { R = r, Mesh = mesh, Sub = sub, Mat = mat, Queue = mat.RenderQueue, Dist = -vpos.z, Order = r.SortingOrder, Seq = seq++ });
+                items.Add(new DrawItem { R = r, Mesh = mesh, Sub = sub, Mat = mat, Queue = mat.RenderQueue, Dist = -vpos.z, Order = r.SortingOrder, Seq = seq++, Model = model });
             }
         }
         items.Sort((a, b) => {
@@ -470,6 +572,9 @@ public static class Pipeline {
             c = b.Dist.CompareTo(a.Dist);
             return c != 0 ? c : a.Seq.CompareTo(b.Seq);
         });
+        NTransform.CacheEpoch = 0;
+        ProfGather += System.Diagnostics.Stopwatch.GetTimestamp() - g0;
+        Shadow.Reset();
         var ctx = new DrawCtx { V = View, P = Proj };
         bool log = DrawLogFrame == Clock.Frame;
         if (log && cam.Depth >= 2) foreach (var kv in Globals.Vectors) Log.Info($"  global {PropIds.Name(kv.Key)} = {kv.Value}");
@@ -494,7 +599,7 @@ public static class Pipeline {
             if (it.R is NSkinnedMeshRenderer sk) sk.Skin(); else it.Mesh.Upload();
             ctx.Mat = it.Mat;
             ctx.Block = it.R.Block;
-            ctx.M = it.R.DrawMatrix;
+            ctx.M = it.R is NSkinnedMeshRenderer ? it.R.DrawMatrix : it.Model;   // skinning may change it
             if (it.R is NSpriteRenderer sr && Sprites.Of(sr.Sprite)?.Texture is { } stex) {
                 ctx.Block ??= new NMaterialBlock();
                 ctx.Block.Textures[PropIds.Id("_MainTex")] = stex;
@@ -502,10 +607,15 @@ public static class Pipeline {
             foreach (var pass in sh.Passes) {
                 if (!PassRuns(pass)) { if (log) Log.Info($"    pass '{pass.Name}' skipped (LightMode {pass.Tags.GetValueOrDefault("LightMode")})"); continue; }
                 LogConsts = log;
+                long b0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool bound = BindPass(it.Mat, sh, pass, ctx);
+                long b1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                ProfBind += b1 - b0;
                 LogConsts = false;
                 if (!bound) { if (log) Log.Info("    pass bind failed"); continue; }
                 it.Mesh.Draw(it.Sub);
+                ProfDraw += System.Diagnostics.Stopwatch.GetTimestamp() - b1;
+                drawCount++;
                 if (log && it.R is NSkinnedMeshRenderer skr && skr.SkinnedPositions is { Length: > 0 } sp)
                     Log.Info($"    skinned v0={sp[0]} v1={sp[Math.Min(100, sp.Length - 1)]} bones={skr.Bones.Length} go={skr.GameObject.Transform.Position} scale={skr.GameObject.Transform.LossyScale}");
                 if (log) {
@@ -537,6 +647,7 @@ public static class Pipeline {
 
     static bool BindCurrentPass(Matrix4x4 model) {
         if (passMat == null || passShader == null || passPass == null || !Device.Ready) return false;
+        Shadow.Reset();
         return BindPass(passMat, passShader, passPass, new DrawCtx { Mat = passMat, M = model, V = View, P = Proj });
     }
 

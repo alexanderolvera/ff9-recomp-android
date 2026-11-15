@@ -36,6 +36,19 @@ public static class TestLoad {
         } catch (Exception e) { Log.Warn("test load failed: " + e); }
     }
 
+    /// The panels' Load: Memoria's autosave (a save state put there by the app) loaded now, in game.
+    public static void LoadAutosaveNow() {
+        object ser = typeof(FF9StateSystem).GetProperty("Serializer", F)!.GetValue(null)!;
+        var load = Array.Find(ser.GetType().GetMethods(F), m => m.Name == "Autoload" && m.GetParameters().Length == 2)!;
+        var finishType = load.GetParameters()[1].ParameterType;
+        var ps = Array.ConvertAll(finishType.GetMethod("Invoke")!.GetParameters(), q => Expression.Parameter(q.ParameterType, q.Name));
+        var call = Expression.Call(typeof(TestLoad).GetMethod(nameof(AutoloadFinished), F)!, Expression.Convert(ps[0], typeof(object)), ps[1]);
+        load.Invoke(ser, new object?[] { null, Expression.Lambda(finishType, call, ps).Compile() });
+        Log.Info("panel: loading the autosave");
+    }
+
+    static void AutoloadFinished(object err, bool ok) => Finished(err, 0, 0, ok);
+
     static void Finished(object err, int slot, int file, bool ok) {
         Log.Info($"test load finished: {err} ok={ok}");
         if (!ok || err.ToString() != "Success") return;

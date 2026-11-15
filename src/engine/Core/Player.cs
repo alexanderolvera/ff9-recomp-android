@@ -79,9 +79,12 @@ public static class Player {
         int noRenderFrom = int.TryParse(Environment.GetEnvironmentVariable("FF9_NO_RENDER_FROM"), out var nrf) ? nrf : int.MaxValue;
         Render = () => {
             if (Clock.Frame >= noRenderFrom) { if (Environment.GetEnvironmentVariable("FF9_NO_SWAP") == null) Gfx.Device.Present(); return; }
+            long r0 = Stopwatch.GetTimestamp();
             Gfx.Pipeline.RenderFrame();
+            long r1 = Stopwatch.GetTimestamp();
             if (shotFrames.Contains(Clock.Frame)) Gfx.Device.Screenshot(System.IO.Path.Combine(shotDir, $"frame{Clock.Frame:D5}.png"));
             Gfx.Device.Present();
+            Prof.Render += r1 - r0; Prof.Present += Stopwatch.GetTimestamp() - r1;
         };
         Assets.AssetDB.Init();
         SceneNames = Assets.AssetDB.SceneNames;
@@ -92,7 +95,9 @@ public static class Player {
         var pace = Stopwatch.StartNew();
         long next = 0;
         while (!Quit && Clock.Frame < maxFrames) {
+            long f0 = Stopwatch.GetTimestamp();
             Frame();
+            Prof.Frame(Stopwatch.GetTimestamp() - f0);
             // the game's Application.targetFrameRate, as Unity keeps it on Android: frames wait
             // (sleeping, not spinning) instead of running as fast as the display allows. Headless
             // tests run unpaced unless FF9_FPS asks.
@@ -268,7 +273,7 @@ public static class Player {
         if (!additive) ActiveScene = scene;
         var created = Assets.SceneLoader.Load(index, scene);
         Clock.LevelLoadTime = Clock.Now;
-        LastSceneLoaded = scene.Name;
+        if (scene.Name is not ("Loading" or "SwirlScene")) LastSceneLoaded = scene.Name;   // the last real scene, not the in-between ones
         Log.Info($"scene {index} '{scene.Name}': {created.Count} behaviours, {sw.ElapsedMilliseconds} ms");
         foreach (var b in created.OrderBy(b => b.ExecutionOrder)) Awaken(b);
         foreach (var b in Snapshot()) if (Registry.Get(b.Managed) == b) ScriptMethods.Call(b, b.Methods.OnLevelWasLoaded, index);
@@ -329,6 +334,26 @@ public static class Destroyer {
 }
 
 /// Counts of GPU uploads between memory reports.
+/// FF9_PROFILE=n: every n frames, the mean milliseconds per frame in game logic (scripts and
+/// animation, without rendering), render submission (culling, sorting, GL calls) and the swap.
+public static class Prof {
+    static readonly int every = int.TryParse(Environment.GetEnvironmentVariable("FF9_PROFILE"), out var n) ? n : 0;
+    public static long Render, Present;
+    static long total, worst;
+    static int frames;
+
+    public static void Frame(long ticksAll) {
+        if (every <= 0) return;
+        total += ticksAll; worst = Math.Max(worst, ticksAll); frames++;
+        if (frames < every) return;
+        double ms(long t) => t * 1000.0 / Stopwatch.Frequency / frames;
+        Log.Info($"prof parts: gather+sort {ms(Gfx.Pipeline.ProfGather):F2}, bind {ms(Gfx.Pipeline.ProfBind):F2}, draw {ms(Gfx.Pipeline.ProfDraw):F2} ms");
+        Gfx.Pipeline.ProfGather = Gfx.Pipeline.ProfBind = Gfx.Pipeline.ProfDraw = 0;
+        Log.Info($"prof {frames} frames: all {ms(total):F2} ms (logic {ms(total - Render - Present):F2}, render {ms(Render):F2}, swap {ms(Present):F2}), worst {worst * 1000.0 / Stopwatch.Frequency:F1} ms, draws {Gfx.Pipeline.LastDrawCount}, culled {Gfx.Pipeline.LastCulled}");
+        total = worst = Render = Present = 0; frames = 0;
+    }
+}
+
 public static class GpuStats {
     public static int VboUploads, IboUploads, TexUploads, RtCreates;
     public static string LastTex = "";

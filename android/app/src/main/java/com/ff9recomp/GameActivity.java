@@ -25,6 +25,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     static native int nativeRun(String dir, String log);
     static native String nativeCompanion();
     static native int nativeRumble();
+    static native void nativeCommand(int cmd);
     static native int nativeFrames();
     static native void nativePad(int buttons, int lt, int rt, int lx, int ly, int rx, int ry);
 
@@ -46,6 +47,15 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         root = new android.widget.FrameLayout(this);
         SurfaceView v = new SurfaceView(this);
         v.getHolder().addCallback(this);
+        // Settings > Resolution: a smaller surface, scaled up by the display hardware (no cost)
+        int res = getSharedPreferences("launcher", MODE_PRIVATE).getInt("resolution", 0);
+        if (res > 0) {
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            getDisplay().getRealMetrics(dm);
+            float f = res == 1 ? 0.75f : 0.5f;
+            int lw = Math.max(dm.widthPixels, dm.heightPixels), lh = Math.min(dm.widthPixels, dm.heightPixels);
+            v.getHolder().setFixedSize(Math.round(lw * f) & ~1, Math.round(lh * f) & ~1);
+        }
         root.addView(v);
         // the on-screen pad (Settings > Touch controls: Auto shows it when no controller is connected)
         android.content.SharedPreferences prefs = getSharedPreferences("launcher", MODE_PRIVATE);
@@ -380,6 +390,45 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
 
     // ---- leaving the game: Select+Start held, then Leave. Ends the game's process (":game");
     // the launcher (its own process) is back. Unsaved progress is lost, as the dialog says.
+    // ---- the panels' deck and book (CompanionView), on the UI thread
+    static boolean hasGuide() { GameActivity g = current; return g != null && g.guide != null; }
+    static void toggleGuideFromPanel() { GameActivity g = current; if (g != null) g.toggleGuide(); }
+    static void commandFromPanel(int cmd) { try { nativeCommand(cmd); } catch (UnsatisfiedLinkError ignored) { } }
+
+    /** The game's own button, pressed for a moment (Menu: Y, the game's menu button). */
+    static void tapFromPanel(int bits) {
+        GameActivity g = current;
+        if (g == null) return;
+        g.ui.removeCallbacks(g.testRelease);
+        g.testButtons = bits;
+        g.send();
+        g.ui.postDelayed(g.testRelease, 120);
+    }
+
+    static void keepStateFromPanel(java.util.function.Consumer<String> note) {
+        GameActivity g = current;
+        if (g != null) g.keepState(note);
+    }
+
+    /** Load: the newest save state, put back as Memoria's autosave and loaded in game. */
+    static void loadLatestFromPanel(java.util.function.Consumer<String> note) {
+        GameActivity g = current;
+        if (g == null) return;
+        int best = -1;
+        long newest = 0;
+        for (int i = 1; i <= SaveStates.SLOTS; i++)
+            if (SaveStates.used(g, i) && SaveStates.data(g, i).lastModified() > newest) { newest = SaveStates.data(g, i).lastModified(); best = i; }
+        if (best < 0) { note.accept("No save states yet (Save keeps one)"); return; }
+        try {
+            SaveStates.restore(g, best);
+            commandFromPanel(3);
+            String d = SaveStates.describe(g, best);
+            note.accept("Loading slot " + best + (d == null ? "" : ": " + d.split(",")[0]));
+        } catch (Exception e) {
+            note.accept("Could not load: " + e.getMessage());
+        }
+    }
+
     private boolean keepHeld, guideHeld;
     private android.webkit.WebView guide;
     private String guidePending;
@@ -390,7 +439,9 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         guide.setVisibility(guide.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
     }
 
-    private void keepState() {
+    private void keepState() { keepState(null); }
+
+    private void keepState(java.util.function.Consumer<String> note) {
         String place = "";
         try { place = CompanionView.clean(new org.json.JSONObject(String.valueOf(companionState())).optString("loc")); } catch (Exception ignored) { }
         String p = place;
@@ -399,7 +450,10 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             try { msg = "Save state " + SaveStates.keep(this, p) + ": " + (p.isEmpty() ? "kept" : p); }
             catch (Exception e) { msg = "No save state: " + e.getMessage(); }
             String m = msg;
-            runOnUiThread(() -> android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show());
+            runOnUiThread(() -> {
+                if (note != null) note.accept(m);
+                else android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show();
+            });
         }).start();
     }
 

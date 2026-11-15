@@ -307,6 +307,23 @@ __attribute__((visibility("default"))) void ff9_companion_set(const char *json) 
     free(old);
     if (getenv("FF9_COMPANION_PRINT")) { static int n; if (n++ % 10 == 0) printf("companion %s\n", json); }
 }
+/* commands from the panels' buttons (CompanionView: boosters, load), run by the engine on the
+   game thread (Core/Companion.cs ff9_companion_take); a small ring, oldest first */
+static volatile int companion_cmds[16];
+static volatile unsigned companion_head, companion_tail;
+__attribute__((visibility("default"))) void ff9_companion_command(int cmd) {
+    pthread_mutex_lock(&companion_lock);
+    if (companion_head - companion_tail < 16) companion_cmds[companion_head++ % 16] = cmd;
+    pthread_mutex_unlock(&companion_lock);
+}
+__attribute__((visibility("default"))) int ff9_companion_take(void) {
+    int c = 0;
+    pthread_mutex_lock(&companion_lock);
+    if (companion_tail != companion_head) c = companion_cmds[companion_tail++ % 16];
+    pthread_mutex_unlock(&companion_lock);
+    return c;
+}
+
 /* a copy for the caller to free, or NULL */
 char *ff9_companion_get(void) {
     pthread_mutex_lock(&companion_lock);

@@ -11,6 +11,32 @@ namespace FF9Engine.Core;
 
 public static class Companion {
     [DllImport("__Internal")] static extern void ff9_companion_set([MarshalAs(UnmanagedType.LPUTF8Str)] string json);
+    [DllImport("__Internal")] static extern int ff9_companion_take();
+
+    // the panels' buttons (CompanionView): boosters as the game's own booster menu sets them
+    const int CMD_SPEED = 1, CMD_LOAD = 3, CMD_BATTLES = 4, CMD_BPLUS = 5;
+    static readonly int[] BoosterOf = { -1, 1, -1, -1, 4, 0 };   // command -> BoosterType (HighSpeedMode 1, NoRandomEncounter 4, BattleAssistance 0)
+
+    static void RunCommands() {
+        for (int cmd; (cmd = ff9_companion_take()) != 0; ) {
+            try {
+                if (cmd == CMD_LOAD) { TestLoad.LoadAutosaveNow(); continue; }
+                if (cmd < 0 || cmd >= BoosterOf.Length || BoosterOf[cmd] < 0) continue;
+                int type = BoosterOf[cmd];
+                var settings = typeof(FF9StateSystem).GetProperty("Settings", F)!.GetValue(null)!;
+                var active = (bool[])settings.GetType().GetField("IsBoosterButtonActive", F)!.GetValue(settings)!;
+                bool on = !active[type];
+                var bt = Type.GetType("BoosterType, Assembly-CSharp")!;
+                object boosterValue = Enum.ToObject(bt, type);
+                settings.GetType().GetMethod("CallBoosterButtonFuntion", F)!.Invoke(settings, new object[] { boosterValue, on });
+                active[type] = on;
+                var ui = typeof(PersistenSingleton<>).MakeGenericType(Type.GetType("UIManager, Assembly-CSharp")!).GetProperty("Instance")!.GetValue(null)!;
+                var booster = ui.GetType().GetProperty("Booster", F)?.GetValue(ui);
+                booster?.GetType().GetMethod("SetBoosterHudIcon", F)?.Invoke(booster, new object[] { boosterValue, on });
+                Log.Info($"panel: booster {boosterValue} {(on ? "on" : "off")}");
+            } catch (Exception e) { Log.Warn("panel command " + cmd + ": " + e.Message); }
+        }
+    }
 
     const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
     static readonly bool enabled = Environment.GetEnvironmentVariable("FF9_COMPANION") != null;
@@ -27,7 +53,9 @@ public static class Companion {
     static long L(object? v) => v == null ? 0 : Convert.ToInt64(v);
 
     public static void Tick() {
-        if (!enabled || Clock.Unscaled < next) return;
+        if (!enabled) return;
+        RunCommands();
+        if (Clock.Unscaled < next) return;
         next = Clock.Unscaled + 0.1f;
         try {
             ff9_companion_set(Build());
@@ -92,7 +120,12 @@ public static class Companion {
         var inst = typeof(PersistenSingleton<>).MakeGenericType(ssType).GetProperty("Instance")?.GetValue(null);
         int mode = (int)L(Get(inst, "mode"));
         object? party = Get(ff9, "party");
-        bool ready = party != null && Get(party, "member") is Array mem && mem.Length > 0 && mem.GetValue(0) != null;
+        // in play only: a field, the world map or a battle, not the title screen and its menus
+        // (the party data exists there too) nor the opening movie (field 70)
+        string scene = Player.LastSceneLoaded;
+        bool inPlay = scene is "FieldMap" or "WorldMap" or "BattleMap";
+        bool opening = (mode == 1 || mode == 5) && L(Get(ff9, "fldMapNo")) == 70;
+        bool ready = inPlay && !opening && party != null && Get(party, "member") is Array mem && mem.Length > 0 && mem.GetValue(0) != null;
         string m = mode == 2 ? "battle" : mode == 3 ? "world" : mode == 1 || mode == 5 ? "field" : "other";
         b.Append("\"ready\":").Append(ready ? 1 : 0).Append(",\"mode\":"); Str(b, m);
         if (ff9 != null) {
@@ -113,6 +146,14 @@ public static class Companion {
             cine = mbg != null && Get(mbg, "played") is true && mode != 2;
         } catch { }
         b.Append(",\"cine\":").Append(cine ? 1 : 0);
+        // boosters and play time (the panels' buttons and header)
+        try {
+            var settings = typeof(FF9StateSystem).GetProperty("Settings", F)!.GetValue(null)!;
+            if (settings.GetType().GetField("IsBoosterButtonActive", F)!.GetValue(settings) is bool[] act && act.Length > 4)
+                b.Append($",\"speed\":{(act[1] ? 1 : 0)},\"noenc\":{(act[4] ? 1 : 0)},\"bplus\":{(act[0] ? 1 : 0)}");
+            double t = Convert.ToDouble(settings.GetType().GetField("time", F)!.GetValue(settings)) + (Clock.Now - Convert.ToDouble(settings.GetType().GetField("StartGameTime", F)!.GetValue(settings)));
+            b.Append(",\"time\":").Append((long)Math.Max(0, t));
+        } catch { }
         if (mode == 3) WorldMapInfo(b);
         // the party (outside battle) from the save data; in battle, from the battle units
         if (mode == 2) {

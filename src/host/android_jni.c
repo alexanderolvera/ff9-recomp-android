@@ -105,6 +105,9 @@ JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeRumble(JNIEnv *env,
 }
 JNIEXPORT jint JNICALL Java_com_ff9recomp_GameActivity_nativeFrames(JNIEnv *env, jclass cls) { return (jint)ff9_frames_shown; }
 
+void ff9_companion_command(int cmd);
+JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativeCommand(JNIEnv *env, jclass cls, jint cmd) { ff9_companion_command(cmd); }
+
 char *ff9_companion_get(void);
 JNIEXPORT jstring JNICALL Java_com_ff9recomp_GameActivity_nativeCompanion(JNIEnv *env, jclass cls) {
     char *c = ff9_companion_get();

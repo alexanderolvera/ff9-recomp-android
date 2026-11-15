@@ -17,8 +17,21 @@ public class NTransform : NComponent {
 
     public Matrix4x4 LocalMatrix => M.TRS(LocalPosition, LocalRotation, LocalScale);
 
+    // While a camera gathers its renderers no script runs, so world matrices are kept for that
+    // window (Pipeline sets CacheEpoch, 0 outside it) and a child reuses its parent's
+    public static int CacheEpoch;
+    int cachedEpoch;
+    Matrix4x4 cachedL2W;
+
     public Matrix4x4 LocalToWorld {
         get {
+            if (CacheEpoch != 0) {
+                if (cachedEpoch == CacheEpoch) return cachedL2W;
+                var w = Parent == null ? LocalMatrix : M.Mul(Parent.LocalToWorld, LocalMatrix);
+                cachedL2W = w;
+                cachedEpoch = CacheEpoch;
+                return w;
+            }
             var m = LocalMatrix;
             for (var p = Parent; p != null; p = p.Parent) m = M.Mul(p.LocalMatrix, m);
             return m;
