@@ -126,7 +126,10 @@ final class SteamLink {
     }
 
     private static final class Session implements AutoCloseable {
-        final SteamClient client = new SteamClient();
+        // WebSocket only: JavaSteam's TCP path needs BouncyCastle, which the APK does not carry, and
+        // Steam's server list hands out TCP servers at random (FF7Recomp #49: sign-in crashed)
+        final SteamClient client = new SteamClient(in.dragonbra.javasteam.steam.steamclient.configuration.SteamConfiguration
+                .create(b -> b.withProtocolTypes(in.dragonbra.javasteam.networking.steam3.ProtocolTypes.WEB_SOCKET)));
         final CallbackManager mgr = new CallbackManager(client);
         final SteamUser user = client.getHandler(SteamUser.class);
         final CompletableFuture<Boolean> connected = new CompletableFuture<>();
