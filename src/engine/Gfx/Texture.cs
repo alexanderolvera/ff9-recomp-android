@@ -92,6 +92,24 @@ public static class Textures {
 
     public static void Register() {
         AssetDB.Readers[ClassIds.Texture2D] = ReadTexture2D;
+        AssetDB.Readers[ClassIds.RenderTexture] = ReadRenderTexture;
+    }
+
+    /// RenderTexture asset (5.2): name, width, height, antiAliasing, depthFormat, colorFormat,
+    /// mipMap, generateMips, sRGB (bools, aligned), then the texture settings (filter, aniso,
+    /// mipBias, wrap). The world map's materials point at some (VolcanoCrater1...).
+    static void ReadRenderTexture(NAsset a, BinReader r) {
+        var t = new NRenderTexture();
+        a.Data = t;
+        a.Name = t.Name = r.String();
+        t.Width = Math.Max(1, r.I32()); t.Height = Math.Max(1, r.I32());
+        r.I32();                                  // antiAliasing
+        int depth = r.I32();
+        t.Depth = depth == 0 ? 0 : depth == 1 ? 16 : 24;
+        t.RtFormat = (RenderTextureFormat)r.I32();
+        r.Bool(); r.Bool(); r.Bool(); r.Align4();
+        t.Filter = (FilterMode)r.I32(); t.Aniso = r.I32(); t.MipBias = r.F32(); t.Wrap = (TextureWrapMode)r.I32();
+        t.Readable = false;
     }
 
     /// Texture2D asset (5.2): name, w, h, size, format, mipCount, readable, readAllowed, imageCount,

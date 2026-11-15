@@ -62,6 +62,7 @@ public static class Pipeline {
             if (alphaFunc != null) fsSrc = InjectAlphaTest(fsSrc, alphaFunc);
             vsSrc = MatchVaryings(vsSrc, fsSrc);
             if (DumpGlsl) Log.Info($"--- program {pass.Name} ---\n{vsSrc}\n{fsSrc}");
+            if (DumpGlsl && Environment.GetEnvironmentVariable("FF9_DUMP_ASM") != null && vp != null && fp != null) Log.Info("--- asm ---\n" + vp.Asm + "\n--- ps asm ---\n" + fp.Asm);
             uint vs = GL.CompileShader(GL.VERTEX_SHADER, vsSrc, out var ve);
             uint fs = GL.CompileShader(GL.FRAGMENT_SHADER, fsSrc, out var fe);
             if (vs == 0 || fs == 0) {
@@ -163,9 +164,17 @@ public static class Pipeline {
             case "unity_AmbientSky": case "unity_AmbientEquator": case "unity_AmbientGround": { var a = Icalls.RenderState.AmbientLight; return new Vector4(a.r, a.g, a.b, a.a); }
             case "unity_FogColor": { var fc = Icalls.RenderState.FogColor; return new Vector4(fc.r, fc.g, fc.b, fc.a); }
             case "unity_FogParams": {
+                // fog off (or an empty range): a factor of 1 everywhere, no fog (was: a divide by
+                // zero that fogged the whole world map to the sky colour)
                 float d = Icalls.RenderState.FogDensity, s = Icalls.RenderState.FogStart, e = Icalls.RenderState.FogEnd;
+                if (!Icalls.RenderState.Fog || (Icalls.RenderState.FogMode == FogMode.Linear && e - s <= 1e-4f)) return new Vector4(0, 0, 0, 1);
                 return new Vector4(d / 1.2011224f, d / 0.6931472f, Icalls.RenderState.FogMode == FogMode.Linear ? -1 / (e - s) : 0, Icalls.RenderState.FogMode == FogMode.Linear ? e / (e - s) : 0);
             }
+            // Unity 5.2's separate fog values (the world map's legacy shaders read these): fog off
+            // pushes the range far away so nothing is fogged
+            case "unity_FogStart": { float v = Icalls.RenderState.Fog ? Icalls.RenderState.FogStart : 1e8f; return new Vector4(v, v, v, v); }
+            case "unity_FogEnd": { float v = Icalls.RenderState.Fog ? Icalls.RenderState.FogEnd : 2e8f; return new Vector4(v, v, v, v); }
+            case "unity_FogDensity": { float v = Icalls.RenderState.Fog ? Icalls.RenderState.FogDensity : 0; return new Vector4(v, v, v, v); }
             case "unity_ColorSpaceGrey": return new Vector4(0.5f, 0.5f, 0.5f, 0.5f);
             case "_LightColor0": case "unity_LightColor0": return new Vector4(0, 0, 0, 0);
             case "_WorldSpaceLightPos0": return new Vector4(0, 1, 0, 0);
@@ -465,7 +474,7 @@ public static class Pipeline {
         bool log = DrawLogFrame == Clock.Frame;
         if (log && cam.Depth >= 2) foreach (var kv in Globals.Vectors) Log.Info($"  global {PropIds.Name(kv.Key)} = {kv.Value}");
         if (log && cam.Depth >= 2) foreach (var kv in Globals.Matrices) Log.Info($"  global matrix {PropIds.Name(kv.Key)} = {kv.Value.ToString().Replace("\n", " | ")}");
-        if (log) Log.Info($"camera '{cam.GameObject.Name}' tag={cam.GameObject.Tag} enabled={cam.Enabled} depth={cam.Depth} mask={cam.CullingMask:x} ortho={cam.Orthographic} size={cam.OrthoSize} clear={cam.ClearFlags} bg={cam.Background} rect={cam.PixelRect} items={items.Count}");
+        if (log) Log.Info($"camera '{cam.GameObject.Name}' tag={cam.GameObject.Tag} enabled={cam.Enabled} depth={cam.Depth} mask={cam.CullingMask:x} ortho={cam.Orthographic} size={cam.OrthoSize} clear={cam.ClearFlags} bg={cam.Background} rect={cam.PixelRect} items={items.Count} near={cam.Near} far={cam.Far} fov={cam.Fov} customProj={cam.CustomProj != null} customView={cam.CustomView != null} pos={cam.GameObject.Transform.Position}");
         foreach (var it in items) {
             if (log) {
                 var mvp = M.Mul(Proj, M.Mul(View, it.R.DrawMatrix));

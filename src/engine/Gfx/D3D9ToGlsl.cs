@@ -192,7 +192,7 @@ public static class D3D9ToGlsl {
                 return $"{CU}[{idx} + {baseIdx}]";
             }
             char k = s[0];
-            string num = new string(s.Skip(1).TakeWhile(char.IsDigit).ToArray());
+            string num = new string(s.SkipWhile(char.IsLetter).TakeWhile(char.IsDigit).ToArray());   // "oT1" -> 1 (was 0: only the first letter skipped)
             int n = num.Length > 0 ? int.Parse(num) : 0;
             switch (k) {
                 case 'r': temps.Add(n); return "r" + n;

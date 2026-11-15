@@ -146,6 +146,7 @@ public static class Player {
         DebugDump.Tick();
         Companion.Tick();
         UiSounds.Tick();
+        TestLoad.Tick();
         if (memEvery > 0 && Clock.Frame % memEvery == 0) MemStat();
         Destroyer.Flush();
         while (levelRequests.Count > 0) {
