@@ -155,6 +155,114 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    // ---- Pixel Guide on the bottom screen (as FF7Recomp): the book opens it there; the panels
+    // step aside (a Presentation is drawn above activities) and a small back button over the
+    // guide brings them back, the guide staying where it was left.
+
+    /** Pixel Guide is opening on the bottom screen: the panels step aside, and the game is put
+     *  back in front on the top screen so the pad keeps playing it while the guide stays in view. */
+    static void guideOpened() {
+        GameActivity a = current;
+        if (a == null) return;
+        a.runOnUiThread(() -> {
+            if (a.companion != null) a.companion.hide();
+            a.showGuideTab(true);
+            a.ui.postDelayed(() -> {
+                // Android gives keys to the display that last started an activity: starting the
+                // game again on the top screen (singleTask: onNewIntent) makes it the focused one
+                try {
+                    android.app.ActivityOptions o = android.app.ActivityOptions.makeBasic();
+                    if (a.getDisplay() != null) o.setLaunchDisplayId(a.getDisplay().getDisplayId());
+                    a.startActivity(new android.content.Intent(a, GameActivity.class).putExtra("refocus", true)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION), o.toBundle());
+                } catch (RuntimeException e) { Log.w(TAG, "game not brought back in front: " + e); }
+            }, 900);
+        });
+    }
+
+    /** A focus hand-back from guideOpened: nothing to change, the game keeps running. */
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        Log.i(TAG, "back in front" + (intent.getBooleanExtra("refocus", false) ? " (guide open)" : ""));
+    }
+
+    /** Android's install confirmation for Pixel Guide is on the bottom screen: the panels step aside. */
+    static void panelsAside() {
+        GameActivity a = current;
+        if (a == null) return;
+        a.runOnUiThread(() -> { if (a.companion != null) a.companion.hide(); });
+    }
+
+    /** Pixel Guide's install ended: the panels come back. */
+    static void guideClosed() {
+        GameActivity a = current;
+        if (a == null) return;
+        a.runOnUiThread(() -> { a.showGuideTab(false); a.showPanels(); });
+    }
+
+    private android.app.Presentation guideTab;
+
+    private void showPanels() {
+        if (companion == null || companion.isShowing()) return;
+        companion.show();
+    }
+
+    private void showGuideTab(boolean on) {
+        if (!on) { if (guideTab != null) guideTab.hide(); return; }
+        if (companion == null) return;
+        if (guideTab == null) {
+            guideTab = new android.app.Presentation(this, companion.getDisplay()) {
+                @Override public boolean dispatchKeyEvent(KeyEvent e) { return GameActivity.this.dispatchKeyEvent(e); }
+                @Override public boolean dispatchGenericMotionEvent(MotionEvent e) { return GameActivity.this.dispatchGenericMotionEvent(e); }
+            };
+            float dp = getResources().getDisplayMetrics().density;
+            // a back arrow, drawn (no text, so it covers as little of the guide as it can)
+            View tab = new View(guideTab.getContext()) {
+                final android.graphics.Paint pen = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                final android.graphics.Path arrow = new android.graphics.Path();
+                @Override protected void onDraw(android.graphics.Canvas c) {
+                    float w = getWidth(), h = getHeight(), cx = w / 2, cy = h / 2, r = Math.min(w, h) * 0.24f;
+                    pen.setColor(0xFFFFFFFF);
+                    pen.setStyle(android.graphics.Paint.Style.STROKE);
+                    pen.setStrokeWidth(3.2f * dp);
+                    pen.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                    pen.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+                    arrow.reset();
+                    arrow.moveTo(cx + r, cy); arrow.lineTo(cx - r, cy);
+                    arrow.moveTo(cx - r * 0.1f, cy - r * 0.9f); arrow.lineTo(cx - r, cy); arrow.lineTo(cx - r * 0.1f, cy + r * 0.9f);
+                    c.drawPath(arrow, pen);
+                }
+            };
+            tab.setContentDescription("Back to the panels");
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[] { 0xF02B3F86, 0xF014204A });
+            bg.setCornerRadius(12 * dp);
+            bg.setStroke((int) (2 * dp), 0xFFC7CFE3);
+            tab.setBackground(bg);
+            tab.setOnClickListener(v -> {
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                showGuideTab(false);
+                showPanels();
+            });
+            guideTab.setContentView(tab, new android.view.ViewGroup.LayoutParams((int) (52 * dp), (int) (52 * dp)));
+            android.view.Window w = guideTab.getWindow();
+            // a small window: touches beside it go to the guide, keys stay with the game
+            w.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+            lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+            lp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;
+            lp.x = (int) (16 * dp);
+            lp.y = (int) (16 * dp);
+            w.setAttributes(lp);
+            guideTab.setCanceledOnTouchOutside(false);
+        }
+        guideTab.show();
+    }
+
     // ---- FPS counter and rumble (polled from the host every 50 ms)
     private android.widget.TextView fpsView;
     private int rumble, lastFrames = -1, lastRumble;
@@ -244,6 +352,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     protected void onDestroy() {
         try { unregisterReceiver(testPad); } catch (Exception ignored) { }
         if (companion != null) { companion.dismiss(); companion = null; }
+        if (guideTab != null) { guideTab.dismiss(); guideTab = null; }
         if (companionHost != null) { companionHost.finish(); companionHost = null; }
         if (current == this) current = null;
         super.onDestroy();

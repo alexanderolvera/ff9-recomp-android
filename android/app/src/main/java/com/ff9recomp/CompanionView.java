@@ -110,6 +110,7 @@ public class CompanionView extends View {
             }
             updateDim(state.optInt("cine") == 1);
             if (flash != null && SystemClock.uptimeMillis() > flashUntil) { flash = null; invalidate(); }
+            if (GuideInstaller.busy || System.currentTimeMillis() < GuideInstaller.statusUntil) invalidate();   // its progress
             handler.postDelayed(this, 100);
         }
     };
@@ -180,12 +181,32 @@ public class CompanionView extends View {
         String loc = clean(state.optString("loc"));
         String where = battle ? "Battle" : loc.isEmpty() ? (world ? "World map" : " ") : loc;
         float right = head.right - 24 * u;
-        if (GameActivity.hasGuide()) {
-            RectF book = new RectF(right - 60 * u, head.top + 22 * u, right, head.bottom - 22 * u);
-            drawBook(c, book, pressed != null && pressed.kind == H_BOOK, u);
-            hits.add(new Hit(book, H_BOOK, 0));
-            right = book.left - 30 * u;
+        {   // the book: Pixel Guide on this screen (or the player's own guide page, when set)
+            RectF book = new RectF(right - 64 * u, head.top + 20 * u, right, head.bottom - 20 * u);
+            boolean hot = pressed != null && pressed.kind == H_BOOK;
+            if (hot) {
+                fill.setShader(null);
+                fill.setColor(0x55FFFFFF);
+                c.drawRoundRect(new RectF(book.left - 8 * u, book.top - 6 * u, book.right + 8 * u, book.bottom + 6 * u), 10 * u, 10 * u, fill);
+            }
+            drawBook(c, book, hot, u);
+            if (SystemClock.uptimeMillis() - guideCheckedAt > 5000) refreshGuide();
+            if (guideIntent == null && !GameActivity.hasGuide()) {   // not installed: a download badge
+                float br = 13 * u, bx = book.right, by = book.bottom;
+                fill.setShader(null);
+                fill.setColor(GuideInstaller.busy ? 0xFFE0B020 : 0xFF40B060);
+                c.drawCircle(bx, by, br, fill);
+                line.setColor(Color.WHITE);
+                line.setStrokeWidth(3 * u);
+                c.drawLine(bx, by - br * 0.55f, bx, by + br * 0.45f, line);
+                c.drawLine(bx - br * 0.45f, by, bx, by + br * 0.45f, line);
+                c.drawLine(bx + br * 0.45f, by, bx, by + br * 0.45f, line);
+            }
+            hits.add(new Hit(new RectF(book.left - 12 * u, head.top, book.right + 16 * u, head.bottom), H_BOOK, 0));
+            right = book.left - 34 * u;
         }
+        String gs = GuideInstaller.status;
+        if (gs != null && System.currentTimeMillis() < GuideInstaller.statusUntil) { flash = gs; flashUntil = SystemClock.uptimeMillis() + 500; }
         String gil = String.format(Locale.US, "%,d G", state.optLong("gil"));
         text.setTypeface(sans);
         text.setTextSize(32 * u);
@@ -315,8 +336,14 @@ public class CompanionView extends View {
             String name = clean(m.optString("name"));
             float k = Math.min(1f, ch / (180 * u));
             float fs = Math.min(96 * u, ch - 30 * u) * Math.max(0.6f, k);
-            RectF face = new RectF(r.left + 16 * u, r.centerY() - fs / 2, r.left + 16 * u + fs, r.centerY() + fs / 2);
             Bitmap fb = image(m.optString("face"));
+            // the game's portrait at its own proportions (fitted, never stretched)
+            float fw = fs, fh = fs;
+            if (fb != null && fb.getWidth() > 0 && fb.getHeight() > 0) {
+                float ar = fb.getWidth() / (float) fb.getHeight();
+                if (ar >= 1) fh = fs / ar; else fw = fs * ar;
+            }
+            RectF face = new RectF(r.left + 16 * u + (fs - fw) / 2, r.centerY() - fh / 2, r.left + 16 * u + (fs + fw) / 2, r.centerY() + fh / 2);
             if (fb != null) {
                 c.drawBitmap(fb, null, face, bmpPaint);
             } else {
@@ -329,7 +356,7 @@ public class CompanionView extends View {
             line.setColor(BORDER); line.setStrokeWidth(2 * u);
             c.drawRoundRect(face, 10 * u, 10 * u, line);
 
-            float x = face.right + 14 * u, xr = r.right - 16 * u;
+            float x = r.left + 16 * u + fs + 14 * u, xr = r.right - 16 * u;
             boolean three = battle;
             float lineH = (ch - 24 * u) / (three ? 4f : 3f);
             float y = r.top + 12 * u + lineH * 0.8f;
@@ -872,7 +899,10 @@ public class CompanionView extends View {
                 prefs.edit().putBoolean("deck_party_hidden", partyHidden).apply();
                 return;
             case H_BOOK:
-                GameActivity.toggleGuideFromPanel();
+                if (GameActivity.hasGuide()) { GameActivity.toggleGuideFromPanel(); return; }   // the player's own page
+                refreshGuide();          // installed or removed meanwhile
+                if (guideIntent != null) openGuide();
+                else GuideInstaller.start(getContext(), getDisplay() != null ? getDisplay().getDisplayId() : -1);
                 return;
         }
         int cmd = h.arg;
@@ -886,6 +916,34 @@ public class CompanionView extends View {
             case CMD_DMG: note(isOn(cmd) ? "9999 damage off" : "9999 damage on"); break;
         }
         GameActivity.commandFromPanel(cmd);
+    }
+
+    // Pixel Guide (a game guide app, as in FF7Recomp): the book opens it here on the bottom
+    // screen; when it is not installed the book offers to install it (GuideInstaller).
+    static final String GUIDE_PACKAGE = "app.nanostack.pixelguide";
+    private android.content.Intent guideIntent;    // null: not installed
+    private long guideCheckedAt = -100000;
+
+    private void refreshGuide() {
+        guideCheckedAt = SystemClock.uptimeMillis();
+        try { guideIntent = getContext().getPackageManager().getLaunchIntentForPackage(GUIDE_PACKAGE); }
+        catch (RuntimeException e) { guideIntent = null; }
+    }
+
+    /** Started straight from here with no activity of ours on this screen: the Thor gives an app
+     *  with an activity on the bottom screen that screen's volume (0 out of the box), which would
+     *  mute the game. A guide already running comes back to the front where it was left. */
+    private void openGuide() {
+        try {
+            android.content.Intent i = new android.content.Intent(guideIntent);
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            android.app.ActivityOptions o = android.app.ActivityOptions.makeBasic();
+            if (getDisplay() != null) o.setLaunchDisplayId(getDisplay().getDisplayId());
+            getContext().startActivity(i, o.toBundle());
+            GameActivity.guideOpened();
+        } catch (RuntimeException e) {
+            note("Pixel Guide could not open");
+        }
     }
 
     void note(String s) {
