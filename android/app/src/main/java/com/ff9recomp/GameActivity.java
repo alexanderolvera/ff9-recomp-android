@@ -236,9 +236,9 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             };
             tab.setContentDescription("Back to the panels");
             android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable(
-                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[] { 0xF02B3F86, 0xF014204A });
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[] { 0xF06A7088, 0xF02A2D3A });
             bg.setCornerRadius(12 * dp);
-            bg.setStroke((int) (2 * dp), 0xFFC7CFE3);
+            bg.setStroke((int) (2 * dp), 0xFFDCD6C4);
             tab.setBackground(bg);
             tab.setOnClickListener(v -> {
                 v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);

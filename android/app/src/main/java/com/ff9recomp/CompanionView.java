@@ -44,12 +44,14 @@ import java.util.Locale;
  * and the world map are saved on the device from the player's own copy; none ship with the app.
  */
 public class CompanionView extends View {
-    // FF9's menu windows: deep blue with a silver frame, gold for what is selected or on
-    private static final int BG = Color.rgb(5, 7, 15), TEXT = 0xFFEEF2FF, LABEL = 0xFF9FB0DC, GOLD = 0xFFF3D27A, OK = 0xFF8FE0A0;
-    private static final int WIN_A = 0xFF2B3F86, WIN_B = 0xFF1A2759, WIN_C = 0xFF14204A, BORDER = 0xFFC7CFE3, INNER = 0xFF4A5A90,
-            ROW = 0xFF34437C, TAB_BG = 0xFF111A3C, TAB_EDGE = 0xFF5A6AA0, TAB_TEXT = 0xFFC7D0EE,
+    // FF9's menu windows: the game's own window skin (its paper texture and silver frame, cut from
+    // the player's copy at runtime); before it arrives, FF9's grey-blue stone with a cream frame.
+    // Gold marks what is selected or on, as the game's own cursor does.
+    private static final int BG = Color.rgb(8, 9, 14), TEXT = 0xFFF2EEE2, LABEL = 0xFFB8BAC6, GOLD = 0xFFF0CF72, OK = 0xFF9EE0A8;
+    private static final int WIN_A = 0xFF6A7088, WIN_B = 0xFF454A5E, WIN_C = 0xFF2A2D3A, BORDER = 0xFFDCD6C4, INNER = 0xFF3A3F50,
+            ROW = 0x40FFFFFF, TAB_BG = 0xFF30333F, TAB_EDGE = 0xFF8A8FA2, TAB_TEXT = 0xFFE4E0D4,
             GOLD_A = 0xFFE7C66C, GOLD_B = 0xFFB98E2E, GOLD_EDGE = 0xFFF6E2A0, GOLD_INK = 0xFF2B1D02,
-            BTN_A = 0xFF1C2A5E, BTN_B = 0xFF0F1838, HOT_A = 0xFF4A5AA8, HOT_B = 0xFF24306A, TRACK = 0xFF070B1E;
+            BTN_A = 0xFF5E6478, BTN_B = 0xFF22252F, HOT_A = 0xFF8A8466, HOT_B = 0xFF3E3A2A, TRACK = 0xC0101218;
     private static final int[] HP = { 0xFF4FBF6A, 0xFF9BE38A }, MP = { 0xFF3D8EE0, 0xFF8CC8FF }, ATB = { 0xFFD8B840, 0xFFFFF08A },
             TRANCE = { 0xFFE04F9A, 0xFFFF9CCC }, LEARNT = { 0xFFD8B840, 0xFFFFF08A }, LOW = { 0xFFD87A30, 0xFFF0B060 };
     private static final int[][] CHIP = { { 0xFF5A1C1C, 0xFFFFB3A8, 0xFFD46A5A }, { 0xFF163A4A, 0xFF9FE0FF, 0xFF4AA0C8 },
@@ -703,43 +705,82 @@ public class CompanionView extends View {
 
     // ---- pieces
 
+    // the game's window skin, when the game has saved it (Core/Companion.cs: skinBg, skinFrame)
+    private Bitmap skinBgOf;
+    private android.graphics.BitmapShader skinShader;
+    private final android.graphics.Rect src = new android.graphics.Rect();
+
+
+    /** A window as in the game's menus: its paper texture tiled inside its silver frame (nine-slice:
+     *  corners as they are, edges stretched). Without the skin: FF9's stone gradient and cream frame. */
     private void window(Canvas c, RectF r, float u) {
-        float rad = 12 * u;
-        fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, new int[] { WIN_A, WIN_B, WIN_C }, new float[] { 0f, 0.55f, 1f }, Shader.TileMode.CLAMP));
-        c.drawRoundRect(r, rad, rad, fill);
+        Bitmap bg = image(state.optString("skinBg")), fr = image(state.optString("skinFrame"));
+        if (bg == null || fr == null) {
+            float rad = 12 * u;
+            fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, new int[] { WIN_A, WIN_B, WIN_C }, new float[] { 0f, 0.5f, 1f }, Shader.TileMode.CLAMP));
+            c.drawRoundRect(r, rad, rad, fill);
+            fill.setShader(null);
+            line.setColor(BORDER);
+            line.setStrokeWidth(3 * u);
+            c.drawRoundRect(r, rad, rad, line);
+            line.setColor(INNER);
+            line.setStrokeWidth(2 * u);
+            c.drawRoundRect(new RectF(r.left + 3.5f * u, r.top + 3.5f * u, r.right - 3.5f * u, r.bottom - 3.5f * u), rad - 3 * u, rad - 3 * u, line);
+            return;
+        }
+        if (skinBgOf != bg) {
+            skinBgOf = bg;
+            skinShader = new android.graphics.BitmapShader(bg, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT);
+        }
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.setScale(u * 1.4f, u * 1.4f);
+        m.postTranslate(r.left, r.top);
+        skinShader.setLocalMatrix(m);
+        fill.setShader(skinShader);
+        float in = 6 * u;
+        c.drawRoundRect(r.left + in, r.top + in, r.right - in, r.bottom - in, 8 * u, 8 * u, fill);
         fill.setShader(null);
-        line.setColor(BORDER);
-        line.setStrokeWidth(3 * u);
-        c.drawRoundRect(r, rad, rad, line);
-        line.setColor(INNER);
-        line.setStrokeWidth(2 * u);
-        c.drawRoundRect(new RectF(r.left + 3.5f * u, r.top + 3.5f * u, r.right - 3.5f * u, r.bottom - 3.5f * u), rad - 3 * u, rad - 3 * u, line);
+        int w = fr.getWidth(), h = fr.getHeight(), k = Math.min(w, h) * 2 / 5;
+        float d = Math.min(26 * u, Math.min(r.width(), r.height()) / 2f);
+        float[] dx = { r.left, r.left + d, r.right - d, r.right }, dy = { r.top, r.top + d, r.bottom - d, r.bottom };
+        int[] sx = { 0, k, w - k, w }, sy = { 0, k, h - k, h };
+        for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {
+            if (i == 1 && j == 1) continue;
+            src.set(sx[i], sy[j], sx[i + 1], sy[j + 1]);
+            c.drawBitmap(fr, src, new RectF(dx[i], dy[j], dx[i + 1], dy[j + 1]), bmpPaint);
+        }
     }
 
     private void tabShape(Canvas c, RectF r, boolean sel, boolean hot, float u) {
         float rad = 10 * u;
-        if (sel) fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, GOLD_A, GOLD_B, Shader.TileMode.CLAMP));
-        else { fill.setShader(null); fill.setColor(hot ? HOT_B : TAB_BG); }
-        c.drawRoundRect(r, rad, rad, fill);
-        fill.setShader(null);
-        line.setColor(sel ? GOLD_EDGE : TAB_EDGE);
-        line.setStrokeWidth(2 * u);
-        c.drawRoundRect(r, rad, rad, line);
+        if (sel) {
+            fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, GOLD_A, GOLD_B, Shader.TileMode.CLAMP));
+            c.drawRoundRect(r, rad, rad, fill);
+            fill.setShader(null);
+            line.setColor(GOLD_EDGE);
+            line.setStrokeWidth(2 * u);
+            c.drawRoundRect(r, rad, rad, line);
+            return;
+        }
+        window(c, r, u);
+        if (hot) { fill.setShader(null); fill.setColor(0x40F0CF72); c.drawRoundRect(r, rad, rad, fill); }
     }
 
     private void button(Canvas c, RectF r, boolean on, boolean hot, float u) {
         float rad = 12 * u;
         if (on) {   // a soft gold glow around a lit button
             fill.setShader(null);
-            fill.setColor(0x33C99A3A);
+            fill.setColor(0x40C99A3A);
             c.drawRoundRect(new RectF(r.left - 5 * u, r.top - 5 * u, r.right + 5 * u, r.bottom + 5 * u), rad + 5 * u, rad + 5 * u, fill);
         }
-        fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, hot ? HOT_A : BTN_A, hot ? HOT_B : BTN_B, Shader.TileMode.CLAMP));
-        c.drawRoundRect(r, rad, rad, fill);
+        window(c, r, u);
         fill.setShader(null);
-        line.setColor(on ? GOLD_EDGE : TAB_EDGE);
-        line.setStrokeWidth(2 * u);
-        c.drawRoundRect(r, rad, rad, line);
+        if (hot) { fill.setColor(0x40F0CF72); c.drawRoundRect(r, rad, rad, fill); }
+        if (on) {
+            line.setColor(GOLD_EDGE);
+            line.setStrokeWidth(3 * u);
+            c.drawRoundRect(r, rad, rad, line);
+        }
     }
 
     /** Small drawn icons for the deck (no emoji: they differ between devices). */

@@ -439,6 +439,20 @@ public static class Companion {
             b.Append(",\"time\":").Append((long)Math.Max(0, t));
         } catch { }
         if (!ready) { b.Append('}'); return b.ToString(); }
+        // the game's own window skin for the panels: its paper texture and its silver frame
+        b.Append(",\"skinBg\":"); Str(b, WantSprite("Window", "dialog_bg"));
+        b.Append(",\"skinFrame\":"); Str(b, WantSprite("Window", "dialog_frame_info"));
+        if (!listedAtlases) {   // once: the UI atlases' sprite names in the log (for the panels' window skin)
+            listedAtlases = true;
+            foreach (var an in new[] { "Window", "General", "Gray", "Blue" }) {
+                try {
+                    var atlas = Get(T("Assets.Sources.Scripts.UI.Common.FF9UIDataTool"), an + "Atlas");
+                    var names = new List<string>();
+                    if (Get(atlas, "spriteList") is IEnumerable sl) foreach (var sd in sl) names.Add($"{S(Get(sd, "name"))}:{L(Get(sd, "width"))}x{L(Get(sd, "height"))}");
+                    Log.Info($"atlas {an}: " + string.Join(" ", names));
+                } catch (Exception e) { Log.Info($"atlas {an}: {e.Message}"); }
+            }
+        }
         if (mode == 3) WorldMapInfo(b);
         // the party (outside battle) from the save data; in battle, from the battle units
         if (mode == 2) {
@@ -499,4 +513,5 @@ public static class Companion {
     }
 
     static string? lastCounters;
+    static bool listedAtlases;
 }
