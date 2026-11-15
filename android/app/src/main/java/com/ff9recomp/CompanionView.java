@@ -1,6 +1,7 @@
 package com.ff9recomp;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -13,6 +14,7 @@ import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
@@ -21,47 +23,74 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 
 /**
- * The second screen (AYN Thor's bottom screen), laid out like FF7Recomp's: a header (where, play
- * time, gil, the guide book), a big window (the world map with the party's arrow; the enemies in
- * battle; the place in fields), the party on the right and a command deck: Menu, Save, Load,
- * Speed, Battles, Battle+ (FF9's own boosters, set as the in-game booster menu does). The game
- * sends its state ten times a second (FF9Engine Core/Companion.cs). Blank until a game is under
- * way; cutscenes dim it with a slow ease. FF9's colours (the launcher's windows); no game art
- * except the world map, saved on the device from the player's own copy.
+ * The second screen (AYN Thor's bottom screen). A header (where, play time, gil, the guide book),
+ * a row of tabs, the party on the left (hideable) with the tab's panel beside it, and the command
+ * deck: Menu, Save, Load, Speed, Battles, Battle+.
+ *
+ * Tabs: Auto (enemies in battle, the map on the world map, items in fields), Abilities (what the
+ * equipped gear still teaches, with AP), Map (the world map, the party's arrow, the chocobo and the
+ * airship), Items, Key items and Extras (the four boosters by touch, the Excalibur II countdown and
+ * the counters the game keeps but never shows). In battle the enemy panel shows what Scan would:
+ * elements, what is left to steal and the drops.
+ *
+ * The game sends its state ten times a second (FF9Engine Core/Companion.cs). Blank until a game is
+ * under way; cutscenes dim it with a slow ease. FF9's menu-window colours. Portraits, item icons
+ * and the world map are saved on the device from the player's own copy; none ship with the app.
  */
 public class CompanionView extends View {
-    private static final int BG = Color.rgb(8, 9, 14), TEXT = 0xFFF2EEE2, DIM = 0xFFAEB0BC, ACCENT = 0xFFE8C66A;
-    private static final int WIN_TOP = 0xFF5E6478, WIN_BOTTOM = 0xFF22252F, HOT_TOP = 0xFF8A8466, HOT_BOTTOM = 0xFF3E3A2A,
-            BORDER = 0xFFDCD6C4, INNER = 0xFF3A3F50, ON_TOP = 0xFF7A7048, ON_BOTTOM = 0xFF3A3420;
-    private static final int HP = Color.rgb(96, 204, 120), MP = Color.rgb(96, 150, 240), ATB = Color.rgb(240, 200, 80),
-            TRANCE = Color.rgb(240, 110, 170), EN = Color.rgb(230, 90, 80);
+    // FF9's menu windows: deep blue with a silver frame, gold for what is selected or on
+    private static final int BG = Color.rgb(5, 7, 15), TEXT = 0xFFEEF2FF, LABEL = 0xFF9FB0DC, GOLD = 0xFFF3D27A, OK = 0xFF8FE0A0;
+    private static final int WIN_A = 0xFF2B3F86, WIN_B = 0xFF1A2759, WIN_C = 0xFF14204A, BORDER = 0xFFC7CFE3, INNER = 0xFF4A5A90,
+            ROW = 0xFF34437C, TAB_BG = 0xFF111A3C, TAB_EDGE = 0xFF5A6AA0, TAB_TEXT = 0xFFC7D0EE,
+            GOLD_A = 0xFFE7C66C, GOLD_B = 0xFFB98E2E, GOLD_EDGE = 0xFFF6E2A0, GOLD_INK = 0xFF2B1D02,
+            BTN_A = 0xFF1C2A5E, BTN_B = 0xFF0F1838, HOT_A = 0xFF4A5AA8, HOT_B = 0xFF24306A, TRACK = 0xFF070B1E;
+    private static final int[] HP = { 0xFF4FBF6A, 0xFF9BE38A }, MP = { 0xFF3D8EE0, 0xFF8CC8FF }, ATB = { 0xFFD8B840, 0xFFFFF08A },
+            TRANCE = { 0xFFE04F9A, 0xFFFF9CCC }, LEARNT = { 0xFFD8B840, 0xFFFFF08A }, LOW = { 0xFFD87A30, 0xFFF0B060 };
+    private static final int[][] CHIP = { { 0xFF5A1C1C, 0xFFFFB3A8, 0xFFD46A5A }, { 0xFF163A4A, 0xFF9FE0FF, 0xFF4AA0C8 },
+            { 0xFF2A2A40, 0xFFC8C8E0, 0xFF6A6A90 }, { 0xFF2A3A20, 0xFFC8E0A8, 0xFF7A9A5A } };
 
     // the deck's commands (Core/Companion.cs; Save and Load go through the app's save states)
-    private static final int CMD_SPEED = 1, CMD_SAVE = 2, CMD_LOAD = 3, CMD_BATTLES = 4, CMD_BPLUS = 5, CMD_MENU = 100;
+    private static final int CMD_SPEED = 1, CMD_SAVE = 2, CMD_LOAD = 3, CMD_BATTLES = 4, CMD_BPLUS = 5, CMD_DMG = 6, CMD_MENU = 100;
+
+    private static final int TAB_AUTO = 0, TAB_ABIL = 1, TAB_MAP = 2, TAB_ITEMS = 3, TAB_KEYS = 4, TAB_EXTRA = 5;
+    private static final String[] TAB_NAMES = { "Auto", "Abilities", "Map", "Items", "Key items", "Extras" };
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG),
-            text = new Paint(Paint.ANTI_ALIAS_FLAG), mapPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
-    private final Typeface sans = Typeface.create("sans-serif-medium", Typeface.NORMAL), sansBold = Typeface.create("sans-serif", Typeface.BOLD);
+            text = new Paint(Paint.ANTI_ALIAS_FLAG), bmpPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+    private final Typeface sans = Typeface.create("sans-serif", Typeface.NORMAL), sansBold = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private JSONObject state = new JSONObject();
     private String last = "";
+    private final SharedPreferences prefs;
 
-    private static final class Button {
-        final String label; final int cmd; final RectF box = new RectF();
-        Button(String label, int cmd) { this.label = label; this.cmd = cmd; }
+    /** Anything on the screen that can be touched. */
+    private static final class Hit {
+        final RectF box = new RectF(); final int kind, arg;
+        Hit(RectF r, int kind, int arg) { box.set(r); this.kind = kind; this.arg = arg; }
     }
-    private final Button[] buttons = {
-        new Button("Menu", CMD_MENU), new Button("Save", CMD_SAVE), new Button("Load", CMD_LOAD),
-        new Button("Speed", CMD_SPEED), new Button("Battles", CMD_BATTLES), new Button("Battle+", CMD_BPLUS),
-    };
-    private Button pressed;
-    private boolean deck = true;
-    private final RectF bookBox = new RectF();
-    private boolean bookPressed;
+    private static final int H_CMD = 0, H_TAB = 1, H_HIDE = 2, H_BOOK = 3;
+    private final List<Hit> hits = new ArrayList<>();
+    private Hit pressed;
+
+    private static final String[] DECK = { "Menu", "Save", "Load", "Speed", "Battles", "Battle+" };
+    private static final int[] DECK_CMD = { CMD_MENU, CMD_SAVE, CMD_LOAD, CMD_SPEED, CMD_BATTLES, CMD_BPLUS };
+    private boolean deck;
+    private int tab;
+    private boolean partyHidden;
     private String flash;
     private long flashUntil;
+
+    // a list panel scrolls by dragging
+    private final RectF panelBox = new RectF();
+    private float scroll, contentH, downX, downY, downScroll;
+    private boolean dragging;
+    private int scrolledTab = -1;
 
     // cutscene dim, as FF7Recomp: a state holds a moment before the lights change, then eases
     private static final float DIM_MAX = 0.85f;
@@ -80,7 +109,7 @@ public class CompanionView extends View {
                 invalidate();
             }
             updateDim(state.optInt("cine") == 1);
-            if (flash != null && android.os.SystemClock.uptimeMillis() > flashUntil) { flash = null; invalidate(); }
+            if (flash != null && SystemClock.uptimeMillis() > flashUntil) { flash = null; invalidate(); }
             handler.postDelayed(this, 100);
         }
     };
@@ -89,14 +118,17 @@ public class CompanionView extends View {
         super(c);
         line.setStyle(Paint.Style.STROKE);
         setHapticFeedbackEnabled(true);
-        deck = Settings.prefs(c).getBoolean("bottom_buttons", true);
+        prefs = Settings.prefs(c);
+        deck = prefs.getBoolean("bottom_buttons", true);
+        tab = Math.max(0, Math.min(TAB_EXTRA, prefs.getInt("deck_tab", TAB_AUTO)));
+        partyHidden = prefs.getBoolean("deck_party_hidden", false);
     }
 
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); handler.post(poll); }
     @Override protected void onDetachedFromWindow() { handler.removeCallbacks(poll); super.onDetachedFromWindow(); }
 
     private void updateDim(boolean cine) {
-        long now = android.os.SystemClock.uptimeMillis();
+        long now = SystemClock.uptimeMillis();
         if (cine != seenCine) { seenCine = cine; seenSince = now; }
         if (cine == dimTarget || now - seenSince < (cine ? DIM_HOLD_IN : DIM_HOLD_OUT)) return;
         dimTarget = cine;
@@ -111,73 +143,141 @@ public class CompanionView extends View {
     /** The game's text tags (like [STRT=67,1] and [ENDN]) out of a name. */
     static String clean(String s) { return s == null ? "" : s.replaceAll("\\[[A-Z]+(=[^\\]]*)?\\]", "").trim(); }
 
+    // ------------------------------------------------------------------ images saved from the player's copy
+
+    private final HashMap<String, Bitmap> images = new HashMap<>();
+    private final HashMap<String, Long> missing = new HashMap<>();
+
+    private Bitmap image(String name) {
+        if (name == null || name.isEmpty()) return null;
+        Bitmap b = images.get(name);
+        if (b != null) return b;
+        Long since = missing.get(name);
+        long now = SystemClock.uptimeMillis();
+        if (since != null && now - since < 2000) return null;
+        File f = new File(new GameInstall(getContext()).files, "worldmap/" + name + ".png");
+        b = f.isFile() ? BitmapFactory.decodeFile(f.getPath()) : null;
+        if (b != null) { images.put(name, b); missing.remove(name); }
+        else missing.put(name, now);
+        return b;
+    }
+
     // ------------------------------------------------------------------ drawing
 
     @Override
     protected void onDraw(Canvas c) {
         int w = getWidth(), h = getHeight();
         c.drawColor(BG);
-        for (Button b : buttons) b.box.setEmpty();
-        bookBox.setEmpty();
+        hits.clear();
         if (state.optInt("ready") != 1) return;     // blank until a game is under way
-        float u = Math.min(w, h) / 1000f, pad = 24 * u, gap = 18 * u;
+        float u = Math.min(w, h) / 1080f, pad = 14 * u, gap = 12 * u;
         String mode = state.optString("mode");
         boolean battle = "battle".equals(mode), world = "world".equals(mode);
 
         // header: where, play time, gil, the guide book
-        RectF head = new RectF(pad, pad, w - pad, pad + 92 * u);
-        window(c, head, WIN_TOP, WIN_BOTTOM, u);
+        RectF head = new RectF(pad, pad, w - pad, pad + 96 * u);
+        window(c, head, u);
         String loc = clean(state.optString("loc"));
-        String where = battle ? "Battle" : world ? "World map" : loc.isEmpty() ? " " : loc;
+        String where = battle ? "Battle" : loc.isEmpty() ? (world ? "World map" : " ") : loc;
         float right = head.right - 24 * u;
         if (GameActivity.hasGuide()) {
-            bookBox.set(right - 64 * u, head.top + 18 * u, right, head.bottom - 18 * u);
-            drawBook(c, bookBox, u);
-            right = bookBox.left - 24 * u;
+            RectF book = new RectF(right - 60 * u, head.top + 22 * u, right, head.bottom - 22 * u);
+            drawBook(c, book, pressed != null && pressed.kind == H_BOOK, u);
+            hits.add(new Hit(book, H_BOOK, 0));
+            right = book.left - 30 * u;
         }
+        String gil = String.format(Locale.US, "%,d G", state.optLong("gil"));
         text.setTypeface(sans);
-        String gil = String.format(java.util.Locale.US, "%d G", state.optLong("gil"));
-        label(c, gil, right, head.centerY() + 13 * u, 36 * u, TEXT, Paint.Align.RIGHT);
-        float gilW = text.measureText(gil);
+        text.setTextSize(32 * u);
+        float gilW = Math.max(text.measureText(gil), 120 * u);
+        label(c, "Gil", right - gilW, head.top + 36 * u, 22 * u, LABEL, Paint.Align.LEFT);
+        label(c, gil, right - gilW, head.top + 76 * u, 32 * u, GOLD, Paint.Align.LEFT);
         long t = state.optLong("time");
-        label(c, String.format(java.util.Locale.US, "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60), right - gilW - 36 * u, head.centerY() + 13 * u, 36 * u, TEXT, Paint.Align.RIGHT);
+        String time = String.format(Locale.US, "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60);
+        float tx = right - gilW - 40 * u - Math.max(text.measureText(time), 130 * u);
+        label(c, "Time", tx, head.top + 36 * u, 22 * u, LABEL, Paint.Align.LEFT);
+        label(c, time, tx, head.top + 76 * u, 32 * u, TEXT, Paint.Align.LEFT);
         text.setTypeface(sansBold);
-        label(c, ellipsize(where, head.width() * 0.45f, 40 * u), head.left + 24 * u, head.centerY() + 14 * u, 40 * u, TEXT, Paint.Align.LEFT);
+        label(c, ellipsize(where, tx - head.left - 60 * u, 38 * u), head.left + 22 * u, head.centerY() + 13 * u, 38 * u, TEXT, Paint.Align.LEFT);
+
+        // tabs
+        float tabTop = head.bottom + gap, tabH = 64 * u, hideW = 70 * u;
+        float tw = (w - 2 * pad - hideW - 6 * 8 * u) / 6f;
+        for (int i = 0; i < 6; i++) {
+            RectF r = new RectF(pad + i * (tw + 8 * u), tabTop, pad + i * (tw + 8 * u) + tw, tabTop + tabH);
+            boolean sel = i == tab;
+            boolean hot = pressed != null && pressed.kind == H_TAB && pressed.arg == i;
+            tabShape(c, r, sel, hot, u);
+            text.setTypeface(sel ? sansBold : sans);
+            label(c, TAB_NAMES[i], r.centerX(), r.centerY() + 10 * u, fit(TAB_NAMES[i], r.width() - 14 * u, 27 * u), sel ? GOLD_INK : TAB_TEXT, Paint.Align.CENTER);
+            hits.add(new Hit(r, H_TAB, i));
+        }
+        RectF hide = new RectF(w - pad - hideW, tabTop, w - pad, tabTop + tabH);
+        tabShape(c, hide, false, pressed != null && pressed.kind == H_HIDE, u);
+        label(c, partyHidden ? "»" : "«", hide.centerX(), hide.centerY() + 12 * u, 36 * u, TAB_TEXT, Paint.Align.CENTER);
+        hits.add(new Hit(hide, H_HIDE, 0));
 
         // the deck at the bottom
         float deckH = deck ? 104 * u : 0;
         if (deck) {
-            float bw = (w - 2 * pad - 5 * gap) / 6f, by = h - pad - deckH;
-            for (int i = 0; i < buttons.length; i++) {
-                Button b = buttons[i];
-                b.box.set(pad + i * (bw + gap), by, pad + i * (bw + gap) + bw, by + deckH);
-                boolean on = (b.cmd == CMD_SPEED && state.optInt("speed") == 1) || (b.cmd == CMD_BATTLES && state.optInt("noenc") == 1)
-                        || (b.cmd == CMD_BPLUS && state.optInt("bplus") == 1);
-                window(c, b.box, b == pressed ? HOT_TOP : on ? ON_TOP : WIN_TOP, b == pressed ? HOT_BOTTOM : on ? ON_BOTTOM : WIN_BOTTOM, u);
-                String l = b.label;
-                if (b.cmd == CMD_SPEED) l = state.optInt("speed") == 1 ? "Speed " + speedFactor() + "×" : "Speed 1×";
-                else if (b.cmd == CMD_BATTLES) l = state.optInt("noenc") == 1 ? "No battles" : "Battles";
+            float bw = (w - 2 * pad - 5 * 10 * u) / 6f, by = h - pad - deckH;
+            for (int i = 0; i < DECK.length; i++) {
+                RectF r = new RectF(pad + i * (bw + 10 * u), by, pad + i * (bw + 10 * u) + bw, by + deckH);
+                int cmd = DECK_CMD[i];
+                boolean on = isOn(cmd);
+                boolean hot = pressed != null && pressed.kind == H_CMD && pressed.arg == cmd && pressed.box.equals(r);
+                button(c, r, on, hot, u);
+                String l = DECK[i];
+                if (cmd == CMD_SPEED && on) l = "Speed " + speedFactor() + "×";
+                else if (cmd == CMD_BATTLES && on) l = "No battles";
                 text.setTypeface(sansBold);
-                label(c, l, b.box.centerX(), b.box.centerY() + 12 * u, fit(l, b.box.width() - 16 * u, 32 * u), on ? ACCENT : TEXT, Paint.Align.CENTER);
+                deckIcon(c, cmd, r.centerX(), r.top + 36 * u, on ? GOLD : TEXT, u);
+                label(c, l, r.centerX(), r.bottom - 22 * u, fit(l, r.width() - 16 * u, 26 * u), on ? GOLD : TEXT, Paint.Align.CENTER);
+                hits.add(new Hit(r, H_CMD, cmd));
             }
         }
 
-        // body: the big window and the party column
-        float top = head.bottom + gap, bottom = h - pad - deckH - (deck ? gap : 0);
-        float colW = (w - 2 * pad) * 0.30f;
-        RectF big = new RectF(pad, top, w - pad - colW - gap, bottom);
-        window(c, big, WIN_TOP, WIN_BOTTOM, u);
-        if (battle) drawEnemies(c, big, u);
-        else drawMap(c, big, world, loc, u);
-        drawParty(c, new RectF(big.right + gap, top, w - pad, bottom), battle, u);
+        // body: the party column and the tab's panel
+        float top = tabTop + tabH + gap, bottom = h - pad - deckH - (deck ? gap : 0);
+        float colW = partyHidden ? 0 : 410 * u;
+        if (!partyHidden) drawParty(c, new RectF(pad, top, pad + colW, bottom), battle, u);
+        RectF panel = new RectF(pad + (partyHidden ? 0 : colW + gap), top, w - pad, bottom);
+        window(c, panel, u);
+        panelBox.set(panel);
+        int show = tab;
+        if (tab == TAB_AUTO) show = battle ? -1 : world ? TAB_MAP : TAB_ITEMS;
+        if (show != scrolledTab) { scrolledTab = show; scroll = 0; }
+        RectF in = new RectF(panel.left + 20 * u, panel.top + 14 * u, panel.right - 20 * u, panel.bottom - 14 * u);
+        c.save();
+        c.clipRect(panel.left + 4 * u, panel.top + 4 * u, panel.right - 4 * u, panel.bottom - 4 * u);
+        contentH = 0;
+        switch (show) {
+            case -1: if (battle) drawEnemies(c, in, u); else drawItems(c, in, u); break;
+            case TAB_ABIL: drawAbilities(c, in, u); break;
+            case TAB_MAP: drawMap(c, in, world, loc, u); break;
+            case TAB_ITEMS: drawItems(c, in, u); break;
+            case TAB_KEYS: drawKeys(c, in, u); break;
+            case TAB_EXTRA: drawExtras(c, in, u); break;
+        }
+        c.restore();
+        if (show == TAB_ABIL || show == TAB_ITEMS || show == TAB_KEYS || (show == -1 && battle)) {
+            float max = Math.max(0, contentH - in.height());
+            if (scroll > max) scroll = max;
+            if (max > 0) {   // a thin scroll bar
+                float trackH = in.height(), th = Math.max(40 * u, trackH * in.height() / contentH), ty = in.top + (trackH - th) * (scroll / max);
+                fill.setShader(null);
+                fill.setColor(0x60C7CFE3);
+                c.drawRoundRect(panel.right - 12 * u, ty, panel.right - 7 * u, ty + th, 3 * u, 3 * u, fill);
+            }
+        } else scroll = 0;
 
         if (flash != null) {
             text.setTypeface(sansBold);
             text.setTextSize(30 * u);
             float fw = text.measureText(flash) + 48 * u;
-            RectF fr = new RectF(big.centerX() - fw / 2, big.bottom - 84 * u, big.centerX() + fw / 2, big.bottom - 24 * u);
-            window(c, fr, HOT_TOP, HOT_BOTTOM, u);
-            label(c, flash, fr.centerX(), fr.centerY() + 10 * u, 30 * u, TEXT, Paint.Align.CENTER);
+            RectF fr = new RectF(panel.centerX() - fw / 2, panel.bottom - 84 * u, panel.centerX() + fw / 2, panel.bottom - 24 * u);
+            button(c, fr, true, false, u);
+            label(c, flash, fr.centerX(), fr.centerY() + 10 * u, 30 * u, GOLD, Paint.Align.CENTER);
         }
         if (dim > 0) {
             fill.setShader(null);
@@ -186,103 +286,480 @@ public class CompanionView extends View {
         }
     }
 
+    private boolean isOn(int cmd) {
+        switch (cmd) {
+            case CMD_SPEED: return state.optInt("speed") == 1;
+            case CMD_BATTLES: return state.optInt("noenc") == 1;
+            case CMD_BPLUS: return state.optInt("bplus") == 1;
+            case CMD_DMG: return state.optInt("dmg") == 1;
+        }
+        return false;
+    }
+
     private int speedFactor() { return Settings.get(getContext(), Settings.find("speed")) + 2; }
 
-    private Bitmap map;
-    private String mapName = "";
+    // ---- party column
 
-    /** The world map (when the game has saved one), the party's arrow on the world map; in a field the place's name over it. */
-    private void drawMap(Canvas c, RectF box, boolean world, String loc, float u) {
-        String name = state.optString("wmap", mapName.isEmpty() ? "world_map_full_all" : mapName);
-        if (!name.equals(mapName) || map == null) {
-            mapName = name;
-            File f = new File(new GameInstall(getContext()).files, "worldmap/" + name + ".png");
-            map = f.isFile() ? BitmapFactory.decodeFile(f.getPath()) : null;
+    private static final int[] FACE_TINT = { 0xFF6A4A2A, 0xFF2A2A5A, 0xFF4A5A6A, 0xFF6A2A3A, 0xFF5A3A6A, 0xFF7A3A1A, 0xFF3A6A5A, 0xFF6A5A2A };
+
+    private void drawParty(Canvas c, RectF col, boolean battle, float u) {
+        JSONArray party = state.optJSONArray("party");
+        int n = party == null ? 0 : Math.min(4, party.length());
+        float g = 10 * u, ch = (col.height() - g * 3) / 4f;
+        for (int i = 0; i < 4; i++) {
+            RectF r = new RectF(col.left, col.top + i * (ch + g), col.right, col.top + i * (ch + g) + ch);
+            window(c, r, u);
+            if (i >= n) continue;
+            JSONObject m = party.optJSONObject(i);
+            if (m == null) continue;
+            String name = clean(m.optString("name"));
+            float k = Math.min(1f, ch / (180 * u));
+            float fs = Math.min(96 * u, ch - 30 * u) * Math.max(0.6f, k);
+            RectF face = new RectF(r.left + 16 * u, r.centerY() - fs / 2, r.left + 16 * u + fs, r.centerY() + fs / 2);
+            Bitmap fb = image(m.optString("face"));
+            if (fb != null) {
+                c.drawBitmap(fb, null, face, bmpPaint);
+            } else {
+                fill.setShader(null);
+                fill.setColor(FACE_TINT[Math.abs(name.hashCode()) % FACE_TINT.length]);
+                c.drawRoundRect(face, 10 * u, 10 * u, fill);
+                text.setTypeface(sansBold);
+                label(c, name.isEmpty() ? "?" : name.substring(0, 1), face.centerX(), face.centerY() + fs * 0.17f, fs * 0.48f, TEXT, Paint.Align.CENTER);
+            }
+            line.setColor(BORDER); line.setStrokeWidth(2 * u);
+            c.drawRoundRect(face, 10 * u, 10 * u, line);
+
+            float x = face.right + 14 * u, xr = r.right - 16 * u;
+            boolean three = battle;
+            float lineH = (ch - 24 * u) / (three ? 4f : 3f);
+            float y = r.top + 12 * u + lineH * 0.8f;
+            text.setTypeface(sans);
+            label(c, ellipsize(name, (xr - x) * 0.7f, 28 * k * u), x, y, 28 * k * u, TEXT, Paint.Align.LEFT);
+            label(c, "Lv " + m.optInt("lv"), xr, y, 22 * k * u, LABEL, Paint.Align.RIGHT);
+            long hp = m.optLong("hp"), mhp = Math.max(1, m.optLong("mhp"));
+            y += lineH;
+            statBar(c, "HP", x, y, xr, hp / (double) mhp, hp * 4 < mhp ? LOW : HP, String.valueOf(hp), k, u);
+            if (battle) {
+                double atb = m.optDouble("atb", 0) / Math.max(1, m.optDouble("matb", 1));
+                y += lineH;
+                statBar(c, "ATB", x, y, xr, atb, ATB, atb >= 1 ? "READY" : "", k, u);
+                int tr = m.optInt("trance", -1);
+                if (tr >= 0) { y += lineH; statBar(c, "TRN", x, y, xr, tr / 255.0, TRANCE, tr >= 255 ? "!!" : "", k, u); }
+            } else {
+                y += lineH;
+                statBar(c, "MP", x, y, xr, m.optLong("mp") / (double) Math.max(1, m.optLong("mmp")), MP, String.valueOf(m.optLong("mp")), k, u);
+            }
         }
-        RectF in = new RectF(box.left + 10 * u, box.top + 10 * u, box.right - 10 * u, box.bottom - 10 * u);
+    }
+
+    private void statBar(Canvas c, String name, float x, float y, float xr, double f, int[] col, String value, float k, float u) {
+        text.setTypeface(sans);
+        label(c, name, x, y, 20 * k * u, LABEL, Paint.Align.LEFT);
+        float bx = x + 52 * k * u, bxr = xr - 96 * k * u;
+        bar(c, bx, y - 11 * k * u, bxr - bx, 12 * u, f, col);
+        label(c, value, xr, y, 22 * k * u, "READY".equals(value) ? GOLD : TEXT, Paint.Align.RIGHT);
+    }
+
+    // ---- panels
+
+    private void drawEnemies(Canvas c, RectF in, float u) {
+        JSONArray en = state.optJSONArray("enemies");
+        List<JSONObject> list = new ArrayList<>();
+        if (en != null) for (int i = 0; i < en.length(); i++) { JSONObject e = en.optJSONObject(i); if (e != null && e.optInt("target") == 1) list.add(e); }
+        if (list.isEmpty()) { empty(c, in, "No enemies in sight", u); return; }
+        boolean full = list.size() == 1;
+        float y = in.top - scroll, start = y;
+        for (JSONObject e : list) {
+            long hp = e.optLong("hp"), mhp = Math.max(1, e.optLong("mhp"));
+            text.setTypeface(sansBold);
+            String name = clean(e.optString("name"));
+            label(c, ellipsize(name, in.width() * 0.5f, 30 * u), in.left, y + 34 * u, 30 * u, hp > 0 ? TEXT : LABEL, Paint.Align.LEFT);
+            text.setTextSize(30 * u);
+            float nw = Math.min(text.measureText(name), in.width() * 0.5f);
+            text.setTypeface(sans);
+            if (e.optInt("lv") > 0) label(c, "Lv " + e.optInt("lv"), in.left + nw + 14 * u, y + 34 * u, 26 * u, LABEL, Paint.Align.LEFT);
+            text.setTypeface(sansBold);
+            label(c, String.format(Locale.US, "%,d / %,d", hp, mhp), in.right, y + 34 * u, 28 * u, TEXT, Paint.Align.RIGHT);
+            y += 50 * u;
+            bar(c, in.left, y, in.width(), 16 * u, hp / (double) mhp, hp * 4 < mhp ? LOW : HP);
+            y += 30 * u;
+            if (full) {
+                y = chipRow(c, in, y, "Weak", e.optJSONArray("weak"), 0, u);
+                y = chipRow(c, in, y, "Absorbs", e.optJSONArray("absorb"), 1, u);
+                y = chipRow(c, in, y, "Immune", e.optJSONArray("immune"), 2, u);
+                y = chipRow(c, in, y, "Halves", e.optJSONArray("half"), 3, u);
+                y = textRow(c, in, y, "Left to steal", join(e.optJSONArray("steal"), "nothing left"), GOLD, u);
+                y = textRow(c, in, y, "Drops", join(e.optJSONArray("drop"), "-"), TEXT, u);
+            } else {
+                // compact: one line of chips (weak, absorbs, immune), one of steal and drops
+                float x = in.left;
+                x = chips(c, x, y, in.right, e.optJSONArray("weak"), 0, "Weak", u);
+                x = chips(c, x, y, in.right, e.optJSONArray("absorb"), 1, "Absorbs", u);
+                chips(c, x, y, in.right, e.optJSONArray("immune"), 2, "Immune", u);
+                y += 46 * u;
+                text.setTypeface(sans);
+                String steal = join(e.optJSONArray("steal"), "nothing left");
+                label(c, "Steal", in.left, y + 4 * u, 24 * u, LABEL, Paint.Align.LEFT);
+                label(c, ellipsize(steal, in.width() - 90 * u, 24 * u), in.left + 80 * u, y + 4 * u, 24 * u, GOLD, Paint.Align.LEFT);
+                y += 34 * u;
+                label(c, "Drops", in.left, y + 4 * u, 24 * u, LABEL, Paint.Align.LEFT);
+                label(c, ellipsize(join(e.optJSONArray("drop"), "-"), in.width() - 90 * u, 24 * u), in.left + 80 * u, y + 4 * u, 24 * u, TEXT, Paint.Align.LEFT);
+                y += 22 * u;
+            }
+            y += 18 * u;
+            if (e != list.get(list.size() - 1)) {   // a divider between enemies
+                line.setColor(BORDER); line.setStrokeWidth(2 * u);
+                c.drawLine(in.left, y - 8 * u, in.right, y - 8 * u, line);
+            }
+            y += 6 * u;
+        }
+        contentH = y - start;
+    }
+
+    private float chipRow(Canvas c, RectF in, float y, String name, JSONArray list, int kind, float u) {
+        rowLine(c, in, y + 52 * u, u);
+        text.setTypeface(sans);
+        label(c, name, in.left, y + 34 * u, 28 * u, LABEL, Paint.Align.LEFT);
+        if (list == null || list.length() == 0) { label(c, "-", in.right, y + 34 * u, 28 * u, TEXT, Paint.Align.RIGHT); return y + 54 * u; }
+        float x = in.right;
+        for (int i = list.length() - 1; i >= 0; i--) x = chip(c, x, y + 8 * u, list.optString(i), kind, true, u) - 8 * u;
+        return y + 54 * u;
+    }
+
+    private float textRow(Canvas c, RectF in, float y, String name, String value, int color, float u) {
+        rowLine(c, in, y + 52 * u, u);
+        text.setTypeface(sans);
+        label(c, name, in.left, y + 34 * u, 28 * u, LABEL, Paint.Align.LEFT);
+        text.setTextSize(28 * u);
+        float lw = text.measureText(name) + 30 * u;
+        label(c, ellipsize(value, in.width() - lw, 28 * u), in.right, y + 34 * u, 28 * u, color, Paint.Align.RIGHT);
+        return y + 54 * u;
+    }
+
+    private float chips(Canvas c, float x, float y, float max, JSONArray list, int kind, String what, float u) {
+        if (list == null || list.length() == 0) return x;
+        text.setTypeface(sans);
+        label(c, what, x, y + 26 * u, 22 * u, LABEL, Paint.Align.LEFT);
+        text.setTextSize(22 * u);
+        x += text.measureText(what) + 8 * u;
+        for (int i = 0; i < list.length() && x < max - 60 * u; i++) x = chip(c, x, y, list.optString(i), kind, false, u) + 6 * u;
+        return x + 14 * u;
+    }
+
+    /** An element as a coloured chip; anchored at its right edge (alignRight) or its left. Returns the other edge. */
+    private float chip(Canvas c, float x, float y, String s, int kind, boolean alignRight, float u) {
+        text.setTypeface(sans);
+        text.setTextSize(24 * u);
+        float cw = text.measureText(s) + 28 * u, chh = 36 * u;
+        RectF r = alignRight ? new RectF(x - cw, y, x, y + chh) : new RectF(x, y, x + cw, y + chh);
+        int[] col = CHIP[kind];
+        fill.setShader(null);
+        fill.setColor(col[0]);
+        c.drawRoundRect(r, chh / 2, chh / 2, fill);
+        line.setColor(col[2]); line.setStrokeWidth(1.5f * u);
+        c.drawRoundRect(r, chh / 2, chh / 2, line);
+        label(c, s, r.centerX(), r.centerY() + 8.5f * u, 24 * u, col[1], Paint.Align.CENTER);
+        return alignRight ? r.left : r.right;
+    }
+
+    private void drawAbilities(Canvas c, RectF in, float u) {
+        JSONArray party = state.optJSONArray("party");
+        float y = in.top - scroll, start = y;
+        boolean any = false;
+        if (party != null) for (int i = 0; i < party.length(); i++) {
+            JSONObject m = party.optJSONObject(i);
+            if (m == null) continue;
+            JSONArray learn = m.optJSONArray("learn");
+            text.setTypeface(sansBold);
+            String name = clean(m.optString("name"));
+            label(c, name, in.left, y + 34 * u, 30 * u, TEXT, Paint.Align.LEFT);
+            text.setTextSize(30 * u);
+            float nw = text.measureText(name) + 20 * u;
+            text.setTypeface(sans);
+            label(c, ellipsize(m.optString("gear"), in.width() - nw, 22 * u), in.right, y + 32 * u, 22 * u, LABEL, Paint.Align.RIGHT);
+            y += 48 * u;
+            if (learn == null || learn.length() == 0) {
+                label(c, "The equipment teaches nothing new", in.left, y + 26 * u, 24 * u, LABEL, Paint.Align.LEFT);
+                y += 44 * u;
+            } else for (int j = 0; j < learn.length(); j++) {
+                JSONObject a = learn.optJSONObject(j);
+                if (a == null) continue;
+                any = true;
+                int ap = a.optInt("ap"), max = Math.max(1, a.optInt("max"));
+                boolean done = a.optInt("done") == 1 || ap >= max;
+                label(c, clean(a.optString("n")), in.left, y + 28 * u, 28 * u, TEXT, Paint.Align.LEFT);
+                label(c, done ? "learnt" : ap + " / " + max + " AP", in.right, y + 28 * u, 28 * u, done ? OK : TEXT, Paint.Align.RIGHT);
+                bar(c, in.left, y + 40 * u, in.width(), 10 * u, done ? 1 : ap / (double) max, done ? LEARNT : MP);
+                y += 62 * u;
+            }
+            y += 10 * u;
+        }
+        if (!any && party == null) empty(c, in, "Nothing here yet", u);
+        contentH = y - start;
+    }
+
+    private void drawItems(Canvas c, RectF in, float u) {
+        JSONArray items = state.optJSONArray("items");
+        if (items == null || items.length() == 0) { empty(c, in, "No items", u); return; }
+        float colGap = 24 * u, cw = (in.width() - colGap) / 2f, rh = 52 * u;
+        float start = in.top - scroll;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject it = items.optJSONObject(i);
+            if (it == null) continue;
+            float x = in.left + (i % 2) * (cw + colGap), y = start + (i / 2) * rh;
+            if (y + rh < in.top - 4 * u || y > in.bottom + 4 * u) continue;
+            Bitmap ic = image(it.optString("icon"));
+            float is = 36 * u;
+            if (ic != null) c.drawBitmap(ic, null, new RectF(x, y + (rh - is) / 2, x + is, y + (rh + is) / 2), bmpPaint);
+            text.setTypeface(sans);
+            String n = String.valueOf(it.optInt("c"));
+            text.setTextSize(26 * u);
+            float nw = text.measureText(n) + 16 * u;
+            label(c, ellipsize(clean(it.optString("n")), cw - is - 14 * u - nw, 26 * u), x + is + 12 * u, y + rh / 2 + 9 * u, 26 * u, TEXT, Paint.Align.LEFT);
+            label(c, n, x + cw, y + rh / 2 + 9 * u, 26 * u, LABEL, Paint.Align.RIGHT);
+            if (i % 2 == 1 || i == items.length() - 1) rowLine(c, in, y + rh, u);
+        }
+        contentH = ((items.length() + 1) / 2) * rh;
+    }
+
+    private void drawKeys(Canvas c, RectF in, float u) {
+        JSONArray keys = state.optJSONArray("keys");
+        if (keys == null || keys.length() == 0) { empty(c, in, "No key items", u); return; }
+        float rh = 50 * u, start = in.top - scroll;
+        for (int i = 0; i < keys.length(); i++) {
+            JSONObject k = keys.optJSONObject(i);
+            if (k == null) continue;
+            float y = start + i * rh;
+            if (y + rh < in.top - 4 * u || y > in.bottom + 4 * u) continue;
+            boolean used = k.optInt("used") == 1;
+            text.setTypeface(sans);
+            label(c, ellipsize(clean(k.optString("n")), in.width() - 120 * u, 27 * u), in.left, y + rh / 2 + 9 * u, 27 * u, used ? LABEL : TEXT, Paint.Align.LEFT);
+            if (used) label(c, "used", in.right, y + rh / 2 + 9 * u, 24 * u, LABEL, Paint.Align.RIGHT);
+            rowLine(c, in, y + rh, u);
+        }
+        contentH = keys.length() * rh;
+    }
+
+    private void drawExtras(Canvas c, RectF in, float u) {
+        float y = in.top;
+        // Excalibur II: the game's own rule is reaching the last save point in under 12 hours
+        long left = 12 * 3600 - state.optLong("time");
+        RectF banner = new RectF(in.left, y, in.right, y + 60 * u);
+        fill.setShader(new LinearGradient(banner.left, 0, banner.right, 0, 0xFF4A3408, 0xFF2A1E05, Shader.TileMode.CLAMP));
+        c.drawRoundRect(banner, 10 * u, 10 * u, fill);
+        fill.setShader(null);
+        line.setColor(0xFFD6B050); line.setStrokeWidth(2 * u);
+        c.drawRoundRect(banner, 10 * u, 10 * u, line);
+        text.setTypeface(sans);
+        label(c, "Excalibur II (12 h)", banner.left + 18 * u, banner.centerY() + 10 * u, 28 * u, GOLD, Paint.Align.LEFT);
+        label(c, left > 0 ? String.format(Locale.US, "%d:%02d:%02d left", left / 3600, left / 60 % 60, left % 60) : "time is up",
+                banner.right - 18 * u, banner.centerY() + 10 * u, 28 * u, GOLD, Paint.Align.RIGHT);
+        y = banner.bottom + 14 * u;
+
+        // the four boosters
+        String[] names = { "High speed", "No battles", "Battle assist", "9999 damage" };
+        int[] cmds = { CMD_SPEED, CMD_BATTLES, CMD_BPLUS, CMD_DMG };
+        float bw = (in.width() - 12 * u) / 2f, bh = 70 * u;
+        for (int i = 0; i < 4; i++) {
+            float x = in.left + (i % 2) * (bw + 12 * u), by = y + (i / 2) * (bh + 12 * u);
+            RectF r = new RectF(x, by, x + bw, by + bh);
+            boolean on = isOn(cmds[i]);
+            boolean hot = pressed != null && pressed.kind == H_CMD && pressed.arg == cmds[i] && pressed.box.equals(r);
+            button(c, r, on, hot, u);
+            text.setTypeface(sans);
+            String l = names[i];
+            text.setTextSize(27 * u);
+            float lw = text.measureText(l), sw = 60 * u;
+            float lx = r.centerX() - (lw + sw) / 2;
+            label(c, l, lx, r.centerY() + 10 * u, 27 * u, on ? GOLD : TEXT, Paint.Align.LEFT);
+            text.setTypeface(sansBold);
+            label(c, on ? "ON" : "OFF", lx + lw + 14 * u, r.centerY() + 9 * u, 22 * u, on ? GOLD : TEXT, Paint.Align.LEFT);
+            hits.add(new Hit(r, H_CMD, cmds[i]));
+        }
+        y += 2 * (bh + 12 * u) + 4 * u;
+
+        // the counters
+        JSONObject k = state.optJSONObject("counters");
+        if (k == null) return;
+        String[][] rows = {
+            { "Successful steals", k.has("steals") ? String.valueOf(k.optInt("steals")) : "-" },
+            { "Frogs caught", k.has("frogs") ? String.valueOf(k.optInt("frogs")) : "-" },
+            { "Dragons slain", k.has("dragons") ? String.valueOf(k.optInt("dragons")) : "-" },
+            { "Treasure hunter points", k.has("treasure") ? String.valueOf(k.optInt("treasure")) : "-" },
+            { "Chocographs", k.has("chocographs") ? k.optInt("chocographs") + " / 24" : "-" },
+            { "Cards (won / lost / draw)", k.has("cardW") ? k.optInt("cardW") + " / " + k.optInt("cardL") + " / " + k.optInt("cardD") : "-" },
+        };
+        float rh = Math.min(52 * u, (in.bottom - y) / rows.length);
+        for (int i = 0; i < rows.length; i++) {
+            float ry = y + i * rh;
+            text.setTypeface(sans);
+            label(c, rows[i][0], in.left, ry + rh / 2 + 10 * u, 28 * u, LABEL, Paint.Align.LEFT);
+            label(c, rows[i][1], in.right, ry + rh / 2 + 10 * u, 28 * u, TEXT, Paint.Align.RIGHT);
+            if (i < rows.length - 1) rowLine(c, in, ry + rh, u);
+        }
+    }
+
+    /** The world map (when the game has saved one) with the party's arrow, the chocobo and the airship; in a field the place's name over it. */
+    private void drawMap(Canvas c, RectF in, boolean world, String loc, float u) {
+        String name = state.optString("wmap", "world_map_full_all");
+        Bitmap map = image(name);
         if (map != null) {
             float scale = Math.min(in.width() / map.getWidth(), in.height() / map.getHeight());
             float mw = map.getWidth() * scale, mh = map.getHeight() * scale;
             RectF dst = new RectF(in.centerX() - mw / 2, in.centerY() - mh / 2, in.centerX() + mw / 2, in.centerY() + mh / 2);
-            mapPaint.setAlpha(world ? 255 : 110);
-            c.drawBitmap(map, null, dst, mapPaint);
-            if (world && state.has("wx")) {
-                float px = dst.left + dst.width() * (float) state.optDouble("wx"), py = dst.top + dst.height() * (1f - (float) state.optDouble("wy"));
-                fill.setShader(null);
-                fill.setColor(0x66E05050);
-                c.drawCircle(px, py, 26 * u, fill);
-                c.save();
-                c.translate(px, py);
-                c.rotate((float) state.optDouble("wrot") + 90f);
-                Path arrow = new Path();
-                arrow.moveTo(20 * u, 0); arrow.lineTo(-12 * u, -12 * u); arrow.lineTo(-6 * u, 0); arrow.lineTo(-12 * u, 12 * u); arrow.close();
-                fill.setColor(0xFFFFE070);
-                c.drawPath(arrow, fill);
-                line.setColor(0xFF201810); line.setStrokeWidth(2.5f * u);
-                c.drawPath(arrow, line);
-                c.restore();
+            bmpPaint.setAlpha(world ? 255 : 110);
+            c.drawBitmap(map, null, dst, bmpPaint);
+            bmpPaint.setAlpha(255);
+            if (world) {
+                if (state.has("chx")) marker(c, dst, state.optDouble("chx"), state.optDouble("chy"), 0xFFF3D27A, "C", u);
+                if (state.has("asx")) marker(c, dst, state.optDouble("asx"), state.optDouble("asy"), 0xFFC8D4F0, "A", u);
+                if (state.has("wx")) {
+                    float px = dst.left + dst.width() * (float) state.optDouble("wx"), py = dst.top + dst.height() * (1f - (float) state.optDouble("wy"));
+                    fill.setShader(null);
+                    fill.setColor(0x66E05050);
+                    c.drawCircle(px, py, 26 * u, fill);
+                    c.save();
+                    c.translate(px, py);
+                    c.rotate((float) state.optDouble("wrot") + 90f);
+                    Path arrow = new Path();
+                    arrow.moveTo(20 * u, 0); arrow.lineTo(-12 * u, -12 * u); arrow.lineTo(-6 * u, 0); arrow.lineTo(-12 * u, 12 * u); arrow.close();
+                    fill.setColor(0xFFFFFFFF);
+                    c.drawPath(arrow, fill);
+                    line.setColor(0xFF201810); line.setStrokeWidth(2.5f * u);
+                    c.drawPath(arrow, line);
+                    c.restore();
+                }
+                // the legend
+                boolean ch = state.has("chx"), as = state.has("asx");
+                if (ch || as) {
+                    String l = "▲ You" + (ch ? "   ● Chocobo" : "") + (as ? "   ● Airship" : "");
+                    text.setTypeface(sans);
+                    text.setTextSize(22 * u);
+                    float lw = text.measureText(l) + 24 * u;
+                    RectF lr = new RectF(dst.left + 10 * u, dst.bottom - 46 * u, dst.left + 10 * u + lw, dst.bottom - 10 * u);
+                    fill.setShader(null);
+                    fill.setColor(0xCC0A1230);
+                    c.drawRoundRect(lr, 8 * u, 8 * u, fill);
+                    label(c, l, lr.left + 12 * u, lr.centerY() + 8 * u, 22 * u, TEXT, Paint.Align.LEFT);
+                }
             }
         }
         if (!world) {
             text.setTypeface(sansBold);
             String l = loc.isEmpty() ? " " : loc;
-            float size = fit(l, in.width() - 40 * u, 44 * u);
-            label(c, l, in.centerX(), in.centerY() + 16 * u, size, TEXT, Paint.Align.CENTER);
+            label(c, l, in.centerX(), in.centerY() + 16 * u, fit(l, in.width() - 40 * u, 44 * u), TEXT, Paint.Align.CENTER);
         }
     }
 
-    private void drawEnemies(Canvas c, RectF box, float u) {
-        JSONArray en = state.optJSONArray("enemies");
-        float x = box.left + 26 * u, y = box.top + 56 * u, wBar = box.width() - 52 * u;
-        text.setTypeface(sansBold);
-        label(c, "Enemies", x, y, 32 * u, DIM, Paint.Align.LEFT);
-        y += 34 * u;
-        if (en == null) return;
-        for (int i = 0; i < en.length() && y < box.bottom - 70 * u; i++) {
-            JSONObject e = en.optJSONObject(i);
-            if (e == null || e.optInt("target") != 1) continue;
-            long hp = e.optLong("hp"), mhp = Math.max(1, e.optLong("mhp"));
-            text.setTypeface(sans);
-            label(c, ellipsize(clean(e.optString("name")), wBar * 0.65f, 34 * u), x, y + 34 * u, 34 * u, hp > 0 ? TEXT : DIM, Paint.Align.LEFT);
-            label(c, hp + " / " + mhp, x + wBar, y + 34 * u, 28 * u, DIM, Paint.Align.RIGHT);
-            bar(c, x, y + 48 * u, wBar, 12 * u, hp / (double) mhp, EN);
-            y += 92 * u;
-        }
-    }
-
-    private void drawParty(Canvas c, RectF col, boolean battle, float u) {
-        JSONArray party = state.optJSONArray("party");
-        int n = party == null ? 0 : Math.min(4, party.length());
-        if (n == 0) return;
-        float g = 14 * u, ch = (col.height() - g * 3) / 4f;
-        for (int i = 0; i < n; i++) {
-            JSONObject m = party.optJSONObject(i);
-            if (m == null) continue;
-            RectF r = new RectF(col.left, col.top + i * (ch + g), col.right, col.top + i * (ch + g) + ch);
-            window(c, r, WIN_TOP, WIN_BOTTOM, u);
-            float x = r.left + 18 * u, bw = r.width() - 36 * u, k = Math.min(1f, ch / (200 * u));
-            text.setTypeface(sansBold);
-            label(c, ellipsize(clean(m.optString("name")), bw, 34 * k * u), x, r.top + 40 * k * u, 34 * k * u, TEXT, Paint.Align.LEFT);
-            text.setTypeface(sans);
-            float yy = r.top + 80 * k * u;
-            label(c, "HP " + m.optLong("hp"), x, yy, 26 * k * u, TEXT, Paint.Align.LEFT);
-            bar(c, x, yy + 8 * u, bw, 9 * u, m.optLong("hp") / (double) Math.max(1, m.optLong("mhp")), HP);
-            yy += 52 * k * u;
-            label(c, "MP " + m.optLong("mp"), x, yy, 26 * k * u, TEXT, Paint.Align.LEFT);
-            bar(c, x, yy + 8 * u, bw, 9 * u, m.optLong("mp") / (double) Math.max(1, m.optLong("mmp")), MP);
-            if (battle) {
-                yy += 36 * k * u;
-                double atb = m.optDouble("atb", 0) / Math.max(1, m.optDouble("matb", 1));
-                int tr = m.optInt("trance", -1);
-                bar(c, x, yy, bw * (tr >= 0 ? 0.48f : 1f), 9 * u, atb, atb >= 1 ? Color.WHITE : ATB);
-                if (tr >= 0) bar(c, x + bw * 0.52f, yy, bw * 0.48f, 9 * u, tr / 255.0, TRANCE);
-            }
-        }
-    }
-
-    private void drawBook(Canvas c, RectF b, float u) {
+    private void marker(Canvas c, RectF dst, double x, double y, int color, String letter, float u) {
+        float px = dst.left + dst.width() * (float) x, py = dst.top + dst.height() * (1f - (float) y);
         fill.setShader(null);
-        fill.setColor(bookPressed ? ACCENT : 0xFFF4F0E4);
+        fill.setColor(color);
+        c.drawCircle(px, py, 15 * u, fill);
+        line.setColor(0xFF201810); line.setStrokeWidth(2.5f * u);
+        c.drawCircle(px, py, 15 * u, line);
+        text.setTypeface(sansBold);
+        label(c, letter, px, py + 7 * u, 20 * u, 0xFF201810, Paint.Align.CENTER);
+    }
+
+    private void empty(Canvas c, RectF in, String s, float u) {
+        text.setTypeface(sans);
+        label(c, s, in.centerX(), in.centerY(), 28 * u, LABEL, Paint.Align.CENTER);
+    }
+
+    private static String join(JSONArray a, String none) {
+        if (a == null || a.length() == 0) return none;
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < a.length(); i++) { if (i > 0) b.append(" · "); b.append(clean(a.optString(i))); }
+        return b.toString();
+    }
+
+    // ---- pieces
+
+    private void window(Canvas c, RectF r, float u) {
+        float rad = 12 * u;
+        fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, new int[] { WIN_A, WIN_B, WIN_C }, new float[] { 0f, 0.55f, 1f }, Shader.TileMode.CLAMP));
+        c.drawRoundRect(r, rad, rad, fill);
+        fill.setShader(null);
+        line.setColor(BORDER);
+        line.setStrokeWidth(3 * u);
+        c.drawRoundRect(r, rad, rad, line);
+        line.setColor(INNER);
+        line.setStrokeWidth(2 * u);
+        c.drawRoundRect(new RectF(r.left + 3.5f * u, r.top + 3.5f * u, r.right - 3.5f * u, r.bottom - 3.5f * u), rad - 3 * u, rad - 3 * u, line);
+    }
+
+    private void tabShape(Canvas c, RectF r, boolean sel, boolean hot, float u) {
+        float rad = 10 * u;
+        if (sel) fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, GOLD_A, GOLD_B, Shader.TileMode.CLAMP));
+        else { fill.setShader(null); fill.setColor(hot ? HOT_B : TAB_BG); }
+        c.drawRoundRect(r, rad, rad, fill);
+        fill.setShader(null);
+        line.setColor(sel ? GOLD_EDGE : TAB_EDGE);
+        line.setStrokeWidth(2 * u);
+        c.drawRoundRect(r, rad, rad, line);
+    }
+
+    private void button(Canvas c, RectF r, boolean on, boolean hot, float u) {
+        float rad = 12 * u;
+        if (on) {   // a soft gold glow around a lit button
+            fill.setShader(null);
+            fill.setColor(0x33C99A3A);
+            c.drawRoundRect(new RectF(r.left - 5 * u, r.top - 5 * u, r.right + 5 * u, r.bottom + 5 * u), rad + 5 * u, rad + 5 * u, fill);
+        }
+        fill.setShader(new LinearGradient(0, r.top, 0, r.bottom, hot ? HOT_A : BTN_A, hot ? HOT_B : BTN_B, Shader.TileMode.CLAMP));
+        c.drawRoundRect(r, rad, rad, fill);
+        fill.setShader(null);
+        line.setColor(on ? GOLD_EDGE : TAB_EDGE);
+        line.setStrokeWidth(2 * u);
+        c.drawRoundRect(r, rad, rad, line);
+    }
+
+    /** Small drawn icons for the deck (no emoji: they differ between devices). */
+    private void deckIcon(Canvas c, int cmd, float x, float y, int color, float u) {
+        fill.setShader(null);
+        fill.setColor(color);
+        line.setColor(color);
+        line.setStrokeWidth(3.5f * u);
+        line.setStrokeCap(Paint.Cap.ROUND);
+        float s = 14 * u;
+        Path p = new Path();
+        switch (cmd) {
+            case CMD_MENU:
+                for (int i = -1; i <= 1; i++) c.drawLine(x - s, y + i * s * 0.7f, x + s, y + i * s * 0.7f, line);
+                break;
+            case CMD_SAVE:
+                c.drawRoundRect(x - s, y - s, x + s, y + s, 3 * u, 3 * u, line);
+                c.drawRect(x - s * 0.5f, y - s, x + s * 0.5f, y - s * 0.3f, fill);
+                c.drawRect(x - s * 0.6f, y + s * 0.2f, x + s * 0.6f, y + s * 0.8f, fill);
+                break;
+            case CMD_LOAD:
+                p.moveTo(x - s, y - s * 0.8f); p.lineTo(x - s * 0.2f, y - s * 0.8f); p.lineTo(x, y - s * 0.4f); p.lineTo(x + s, y - s * 0.4f);
+                p.lineTo(x + s, y + s * 0.9f); p.lineTo(x - s, y + s * 0.9f); p.close();
+                c.drawPath(p, line);
+                break;
+            case CMD_SPEED:
+                p.moveTo(x - s, y - s * 0.8f); p.lineTo(x, y); p.lineTo(x - s, y + s * 0.8f); p.close();
+                p.moveTo(x, y - s * 0.8f); p.lineTo(x + s, y); p.lineTo(x, y + s * 0.8f); p.close();
+                c.drawPath(p, fill);
+                break;
+            case CMD_BATTLES:
+                p.moveTo(x, y - s); p.lineTo(x + s * 0.9f, y - s * 0.6f); p.lineTo(x + s * 0.8f, y + s * 0.2f);
+                p.quadTo(x + s * 0.5f, y + s * 0.8f, x, y + s); p.quadTo(x - s * 0.5f, y + s * 0.8f, x - s * 0.8f, y + s * 0.2f);
+                p.lineTo(x - s * 0.9f, y - s * 0.6f); p.close();
+                c.drawPath(p, line);
+                break;
+            case CMD_BPLUS:
+                c.drawLine(x - s, y, x + s, y, line);
+                c.drawLine(x, y - s, x, y + s, line);
+                break;
+        }
+        line.setStrokeCap(Paint.Cap.BUTT);
+    }
+
+    private void drawBook(Canvas c, RectF b, boolean hot, float u) {
+        fill.setShader(null);
+        fill.setColor(hot ? GOLD : 0xFFF4F0E4);
         float mid = b.centerX();
         Path left = new Path(), right = new Path();
         left.moveTo(mid, b.top + 6 * u); left.lineTo(b.left, b.top); left.lineTo(b.left, b.bottom - 4 * u); left.lineTo(mid, b.bottom); left.close();
@@ -298,26 +775,23 @@ public class CompanionView extends View {
         }
     }
 
-    private void window(Canvas c, RectF r, int top, int bottom, float u) {
-        float rad = 10 * u;
-        fill.setShader(new LinearGradient(r.left, r.top, r.right, r.bottom, top, bottom, Shader.TileMode.CLAMP));
-        c.drawRoundRect(r, rad, rad, fill);
-        fill.setShader(null);
-        line.setColor(BORDER);
-        line.setStrokeWidth(3 * u);
-        c.drawRoundRect(r, rad, rad, line);
-        line.setColor(INNER);
+    private void rowLine(Canvas c, RectF in, float y, float u) {
+        line.setColor(ROW);
         line.setStrokeWidth(1.5f * u);
-        c.drawRoundRect(new RectF(r.left + 3 * u, r.top + 3 * u, r.right - 3 * u, r.bottom - 3 * u), rad - 3 * u, rad - 3 * u, line);
+        c.drawLine(in.left, y, in.right, y, line);
     }
 
-    private void bar(Canvas c, float x, float y, float bw, float bh, double f, int color) {
+    private void bar(Canvas c, float x, float y, float bw, float bh, double f, int[] col) {
         f = Math.max(0, Math.min(1, f));
         fill.setShader(null);
-        fill.setColor(Color.argb(170, 0, 0, 0));
+        fill.setColor(TRACK);
         c.drawRoundRect(x, y, x + bw, y + bh, bh / 2, bh / 2, fill);
-        fill.setColor(color);
-        if (f > 0) c.drawRoundRect(x, y, x + (float) (bw * f), y + bh, bh / 2, bh / 2, fill);
+        if (f > 0) {
+            float xe = x + (float) (bw * f);
+            fill.setShader(new LinearGradient(x, 0, x + bw, 0, col[0], col[1], Shader.TileMode.CLAMP));
+            c.drawRoundRect(x, y, Math.max(xe, x + bh), y + bh, bh / 2, bh / 2, fill);
+            fill.setShader(null);
+        }
     }
 
     private void label(Canvas c, String s, float x, float y, float size, int color, Paint.Align a) {
@@ -343,58 +817,80 @@ public class CompanionView extends View {
 
     // ------------------------------------------------------------------ touch
 
+    private Hit hitAt(float x, float y) {
+        for (int i = hits.size() - 1; i >= 0; i--) if (hits.get(i).box.contains(x, y)) return hits.get(i);
+        return null;
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         if (state.optInt("ready") != 1) { pressed = null; return true; }
         float x = e.getX(), y = e.getY();
         switch (e.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_DOWN: {
+                downX = x; downY = y; downScroll = scroll; dragging = false;
+                pressed = hitAt(x, y);
+                if (pressed != null) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                invalidate();
+                return true;
+            }
             case MotionEvent.ACTION_MOVE: {
-                Button hit = null;
-                for (Button b : buttons) if (b.box.contains(x, y)) hit = b;
-                boolean book = bookBox.contains(x, y);
-                if (hit != pressed || book != bookPressed) {
-                    if ((hit != null && hit != pressed) || (book && !bookPressed)) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    pressed = hit;
-                    bookPressed = book;
-                    invalidate();
+                if (!dragging && panelBox.contains(downX, downY) && Math.abs(y - downY) > 14 * getResources().getDisplayMetrics().density) {
+                    dragging = true;
+                    pressed = null;
                 }
+                if (dragging) { scroll = Math.max(0, downScroll - (y - downY)); invalidate(); return true; }
+                Hit h = hitAt(x, y);
+                if (h != pressed) { pressed = h != null && pressed != null && h.box.equals(pressed.box) ? h : null; invalidate(); }
                 return true;
             }
             case MotionEvent.ACTION_UP: {
-                Button b = pressed;
-                boolean book = bookPressed;
+                Hit h = pressed;
                 pressed = null;
-                bookPressed = false;
                 invalidate();
-                if (book && bookBox.contains(x, y)) GameActivity.toggleGuideFromPanel();
-                if (b != null && b.box.contains(x, y)) run(b.cmd);
+                if (!dragging && h != null && h.box.contains(x, y)) run(h);
+                dragging = false;
                 return true;
             }
             case MotionEvent.ACTION_CANCEL:
                 pressed = null;
-                bookPressed = false;
+                dragging = false;
                 invalidate();
                 return true;
         }
         return true;
     }
 
-    private void run(int cmd) {
+    private void run(Hit h) {
+        switch (h.kind) {
+            case H_TAB:
+                tab = h.arg;
+                prefs.edit().putInt("deck_tab", tab).apply();
+                return;
+            case H_HIDE:
+                partyHidden = !partyHidden;
+                prefs.edit().putBoolean("deck_party_hidden", partyHidden).apply();
+                return;
+            case H_BOOK:
+                GameActivity.toggleGuideFromPanel();
+                return;
+        }
+        int cmd = h.arg;
         switch (cmd) {
             case CMD_MENU: GameActivity.tapFromPanel(GameActivity.Y); return;
             case CMD_SAVE: GameActivity.keepStateFromPanel(this::note); return;
             case CMD_LOAD: GameActivity.loadLatestFromPanel(this::note); return;
-            case CMD_SPEED: note(state.optInt("speed") == 1 ? "Normal speed" : "Speed " + speedFactor() + "×"); break;
-            case CMD_BATTLES: note(state.optInt("noenc") == 1 ? "Random battles on" : "No random battles"); break;
-            case CMD_BPLUS: note(state.optInt("bplus") == 1 ? "Battle assistance off" : "Battle assistance on"); break;
+            case CMD_SPEED: note(isOn(cmd) ? "Normal speed" : "Speed " + speedFactor() + "×"); break;
+            case CMD_BATTLES: note(isOn(cmd) ? "Random battles on" : "No random battles"); break;
+            case CMD_BPLUS: note(isOn(cmd) ? "Battle assistance off" : "Battle assistance on"); break;
+            case CMD_DMG: note(isOn(cmd) ? "9999 damage off" : "9999 damage on"); break;
         }
         GameActivity.commandFromPanel(cmd);
     }
 
     void note(String s) {
         flash = s;
-        flashUntil = android.os.SystemClock.uptimeMillis() + 1800;
+        flashUntil = SystemClock.uptimeMillis() + 1800;
         invalidate();
     }
 }

@@ -145,3 +145,12 @@
 - Shader register bug (fixed): oT1..oT9 parsed as oT0. The world map was all fog colour, the movies
   lost their chroma (the opening FMV's "tint" was this, not the original).
 - The Thor sleeping during a test leaves the game without a surface (nothing starts): wake it first.
+- 2026-11-14: second-screen deck with tabs (Auto, Abilities, Map, Items, Key items, Extras, « hides the
+  party). Core/Companion.cs adds per enemy: Lv, weak/absorb/immune/half elements, StealableItems,
+  DroppableItems; per member: portrait (FF9UIDataTool.AvatarSpriteName), gear, abilities the gear
+  teaches with AP (ff9abil); items (icons item{shape}_{color} from IconAtlas), key items; counters
+  (steal_no, Frogs, categoryKillCount[Dragon], treasure points, chocographs = gEventGlobal 187..189
+  bits, card W/L/D); 9999 damage booster (command 6, BoosterType 3); chocobo and airship on the map.
+  Portraits and icons are cut from the player's atlases at runtime (GPU read-back once per atlas) into
+  files/worldmap/ui_<Atlas>_<sprite>.png; nothing ships with the app. Reflection lookups are cached;
+  gear and counters refresh once a second, item lists only when the inventory changes.
