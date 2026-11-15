@@ -82,10 +82,14 @@ public class CompanionView extends View {
         label(c, String.format(java.util.Locale.US, "%,d Gil", state.optLong("gil")), w - pad, pad + 44 * u, 34 * u, TEXT, Paint.Align.RIGHT);
         float y = pad + 80 * u;
 
+        // on the world map: the game's own map (saved from the player's copy) and where the party is
+        if ("world".equals(mode)) y = drawWorldMap(c, state.optString("wmap"), pad, y, w - 2 * pad, h * 0.42f, u) + 12 * u;
+
         // the party
         JSONArray party = state.optJSONArray("party");
         int n = party == null ? 0 : party.length();
-        float cardH = battle ? 150 * u : 132 * u, gap = 14 * u;
+        boolean compact = "world".equals(mode);
+        float cardH = battle ? 150 * u : compact ? 104 * u : 132 * u, gap = compact ? 8 * u : 14 * u;
         for (int i = 0; i < n; i++) {
             JSONObject m = party.optJSONObject(i);
             if (m == null) continue;
@@ -94,7 +98,7 @@ public class CompanionView extends View {
             float x = r.left + 22 * u, right = r.right - 22 * u;
             label(c, clean(m.optString("name")), x, r.top + 44 * u, 38 * u, TEXT, Paint.Align.LEFT);
             label(c, "Lv " + m.optInt("lv"), right, r.top + 44 * u, 30 * u, DIM, Paint.Align.RIGHT);
-            float col = (right - x) / 2, bw = col - 24 * u, by = r.top + 76 * u;
+            float col = (right - x) / 2, bw = col - 24 * u, by = r.top + (compact ? 70 : 76) * u;
             stat(c, "HP", m.optLong("hp"), m.optLong("mhp"), x, by, bw, HP, u);
             stat(c, "MP", m.optLong("mp"), m.optLong("mmp"), x + col + 12 * u, by, bw, MP, u);
             if (battle) {
@@ -127,6 +131,38 @@ public class CompanionView extends View {
             fill.setColor(Color.argb(Math.round(170 * dim), 0, 0, 0));
             c.drawRect(0, 0, w, h, fill);
         }
+    }
+
+    private android.graphics.Bitmap map;
+    private String mapName = "";
+
+    /** The map scaled into the box, the party marker and its heading; returns the bottom edge. */
+    private float drawWorldMap(Canvas c, String name, float x, float y, float bw, float bh, float u) {
+        if (!name.equals(mapName)) {
+            mapName = name;
+            java.io.File f = new java.io.File(new GameInstall(getContext()).files, "worldmap/" + name + ".png");
+            map = f.isFile() ? android.graphics.BitmapFactory.decodeFile(f.getPath()) : null;
+        }
+        if (map == null) return y;
+        float scale = Math.min(bw / map.getWidth(), bh / map.getHeight());
+        float mw = map.getWidth() * scale, mh = map.getHeight() * scale, mx = x + (bw - mw) / 2;
+        RectF dst = new RectF(mx, y, mx + mw, y + mh);
+        fill.setShader(null);
+        c.drawBitmap(map, null, dst, fill);
+        if (state.has("wx")) {
+            float px = dst.left + dst.width() * (float) state.optDouble("wx"), py = dst.top + dst.height() * (1f - (float) state.optDouble("wy"));
+            c.save();
+            c.translate(px, py);
+            c.rotate((float) state.optDouble("wrot") + 90f);
+            android.graphics.Path arrow = new android.graphics.Path();
+            arrow.moveTo(20 * u, 0); arrow.lineTo(-12 * u, -12 * u); arrow.lineTo(-6 * u, 0); arrow.lineTo(-12 * u, 12 * u); arrow.close();
+            fill.setColor(0xFFFFE070);
+            c.drawPath(arrow, fill);
+            line.setColor(0xFF201810); line.setStrokeWidth(2.5f * u);
+            c.drawPath(arrow, line);
+            c.restore();
+        }
+        return dst.bottom;
     }
 
     private void window(Canvas c, RectF r, float u) {

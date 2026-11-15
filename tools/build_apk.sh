@@ -48,5 +48,5 @@ if grep -rl "$(whoami)" $OUT/jni $OUT/assets 2>/dev/null; then echo "user name f
 
 cd android
 JAVA_HOME="${JAVA_HOME:-$(ls -d "/c/Program Files/Microsoft"/jdk-17* "/c/Program Files/Eclipse Adoptium"/jdk-17* "/c/Program Files/Android/Android Studio/jbr" 2>/dev/null | head -1)}" \
-  ./gradlew -q assembleRelease
+  ./gradlew -q assembleRelease || { echo "gradle failed once (Windows file lock?), retrying"; sleep 3; JAVA_HOME="${JAVA_HOME:-$(ls -d "/c/Program Files/Microsoft"/jdk-17* "/c/Program Files/Eclipse Adoptium"/jdk-17* "/c/Program Files/Android/Android Studio/jbr" 2>/dev/null | head -1)}" ./gradlew -q assembleRelease; }
 ls -la app/build/outputs/apk/release/

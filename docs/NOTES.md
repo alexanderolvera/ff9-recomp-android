@@ -138,3 +138,10 @@
 - `FF9_IL_DUMP=Type::Method:fromHex:toHex`: prints a game method's IL with tokens resolved (on the device;
   no .NET runtime on the PC). `FF9_WARP_WORLD=frame:wldMapNo`: rough world-map switch for tests.
 - Rumble reaches the game's XInput path (pad reported connected); FF9 vibrates only at scripted moments.
+- 2026-11-14: a shared save file (Steam forum, SavedData_ww.dat, slot 2: Alexandria, Gegalrich Shores on
+  the world map, Dali Inn at Lv 99) is kept on the Thor only (/data/local/tmp/ff9/save_shared), never
+  in the repository. `FF9_LOAD_FILE=frame:slot:file` (0-based; slot 2 FILE03 = 1:2) loads one from the
+  title like the Load Game screen; the app takes `--es test_load 1:2` on test_play.
+- Shader register bug (fixed): oT1..oT9 parsed as oT0. The world map was all fog colour, the movies
+  lost their chroma (the opening FMV's "tint" was this, not the original).
+- The Thor sleeping during a test leaves the game without a surface (nothing starts): wake it first.

@@ -39,6 +39,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        System.loadLibrary("ff9");      // before the panels and the poller call into it (the surface may come much later)
         current = this;
         Reports.installCrashHandler(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -276,12 +277,15 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 Os.setenv("FF9_GAME", gi.game.getPath(), true);
                 Os.setenv("LD_LIBRARY_PATH", nat, true);
                 Os.setenv("FF9_COMPANION", "1", true);
+                Os.setenv("FF9_WORLDMAP_DIR", new File(gi.files, "worldmap").getPath(), true);   // the panels' world map (Core/Companion.cs)
                 Os.setenv("FF9_UI_SOUNDS", Sfx.dir(this).getPath(), true);   // the launcher's menu sounds (Core/UiSounds.cs)
                 Os.setenv("FF9_ACHIEVEMENTS", Achievements.file(this).getPath(), true);   // src/host/win32.c     // the game's state for the panels and save-state names
                 // resume a save state, or Settings > Start: Continue (Memoria loads its autosave at once)
                 boolean autoload = getIntent().getBooleanExtra("autoload", false)
                         || getSharedPreferences("launcher", MODE_PRIVATE).getInt("start", 0) == 1;
                 if (autoload && SaveStates.autosave(this).isFile()) Os.setenv("FF9_ARGS", "-memoria-autoload", true);
+                String testLoad = getIntent().getStringExtra("test_load");
+                if (testLoad != null && testLoad.matches("\\d+:\\d+")) Os.setenv("FF9_LOAD_FILE", "900:" + testLoad, true);
                 String testArgs = getIntent().getStringExtra("test_args");
                 if (testArgs != null) Os.setenv("FF9_ARGS", testArgs.trim().replace(' ', '+'), true);
             } catch (Exception e) {

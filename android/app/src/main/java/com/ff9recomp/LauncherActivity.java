@@ -58,7 +58,7 @@ public class LauncherActivity extends Activity {
     private String page = "settings";
     private boolean busy, withSaves;
     private ModCatalog.Mod modShown;
-    private String testArgs;
+    private String testArgs, testLoad;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -140,6 +140,8 @@ public class LauncherActivity extends Activity {
             i.removeExtra(TestControl.EXTRA_PLAY);
             testArgs = i.getStringExtra("test_args");     // adb tests: Memoria's launch options (e.g. "-memoria-battle 336")
             i.removeExtra("test_args");
+            testLoad = i.getStringExtra("test_load");     // adb tests: "slot:file" (0-based) loaded from the title (FF9_LOAD_FILE)
+            i.removeExtra("test_load");
             content.post(this::play);
         }
     }
@@ -215,6 +217,7 @@ public class LauncherActivity extends Activity {
         }
         Intent g = new Intent(this, GameActivity.class).putExtra("autoload", autoload);
         if (testArgs != null) { g.putExtra("test_args", testArgs); testArgs = null; }
+        if (testLoad != null && testLoad.matches("\\d+:\\d+")) { g.putExtra("test_load", testLoad); testLoad = null; }
         if (Settings.prefs(this).getBoolean("swap_screens", false)) {
             android.hardware.display.DisplayManager dm = (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
             android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);

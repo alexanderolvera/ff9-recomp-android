@@ -164,8 +164,15 @@ final class GameInstall {
     // ---------------------------------------------------------------- runtime from the APK
     void extractRuntime() throws IOException {
         File stamp = new File(runtime, ".version");
-        String ver = String.valueOf(ctx.getPackageManager().getPackageArchiveInfo(ctx.getPackageCodePath(), 0) != null
-                ? new File(ctx.getPackageCodePath()).lastModified() : 0);
+        // the install's update time (changes with every install or update; the APK file's own
+        // timestamp did not, so a new engine was not unpacked)
+        String ver;
+        try {
+            android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
+            ver = pi.getLongVersionCode() + "-" + pi.lastUpdateTime;
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            ver = "0";
+        }
         if (stamp.isFile() && new String(Files.readAllBytes(stamp.toPath()), StandardCharsets.UTF_8).equals(ver)) return;
         runtime.mkdirs();
         try (ZipInputStream z = new ZipInputStream(ctx.getAssets().open("runtime.zip"))) {

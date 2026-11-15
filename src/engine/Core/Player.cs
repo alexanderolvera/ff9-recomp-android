@@ -48,6 +48,7 @@ public static class Player {
     public static readonly List<NMonoBehaviour> Behaviours = new();
     static readonly List<NMonoBehaviour> pendingStart = new();
     public static NScene? ActiveScene;
+    public static string LastSceneLoaded = "";
     public static string[] SceneNames = Array.Empty<string>();
     public static bool Quit;
     public static Action? Render;             // set by the renderer
@@ -267,6 +268,7 @@ public static class Player {
         if (!additive) ActiveScene = scene;
         var created = Assets.SceneLoader.Load(index, scene);
         Clock.LevelLoadTime = Clock.Now;
+        LastSceneLoaded = scene.Name;
         Log.Info($"scene {index} '{scene.Name}': {created.Count} behaviours, {sw.ElapsedMilliseconds} ms");
         foreach (var b in created.OrderBy(b => b.ExecutionOrder)) Awaken(b);
         foreach (var b in Snapshot()) if (Registry.Get(b.Managed) == b) ScriptMethods.Call(b, b.Methods.OnLevelWasLoaded, index);

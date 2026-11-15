@@ -10,14 +10,18 @@ namespace FF9Engine.Core;
 
 public static class TestLoad {
     static readonly string? spec = Environment.GetEnvironmentVariable("FF9_LOAD_FILE");
+    static bool done;
     const BindingFlags F = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
     static Type T(string n) => typeof(FF9StateSystem).Assembly.GetType(n)!;
 
     public static void Tick() {
-        if (spec == null) return;
+        if (spec == null || done) return;
         var p = spec.Split(':');
-        if (p.Length < 3 || !int.TryParse(p[0], out int at) || Clock.Frame != at) return;
+        if (p.Length < 3 || !int.TryParse(p[0], out int at) || Clock.Frame < at) return;
+        // on the title screen (the app reaches it later than the headless host)
+        if (Player.LastSceneLoaded != "Title") return;
+        done = true;
         int slot = int.Parse(p[1]), file = int.Parse(p[2]);
         Log.Info($"test load: slot {slot} file {file}");
         try {

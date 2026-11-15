@@ -36,6 +36,44 @@ public static class Companion {
         }
     }
 
+    // ---- the world map on the panels: the game's own full map, saved from the player's copy
+    // (EmbeddedAsset/UI/Sprites/world_map_full_*) into FF9_WORLDMAP_DIR, and where the party is
+    // on it (WMUIData.MainCharacterPosition, as the game's mini-map uses it)
+    static readonly string? mapDir = Environment.GetEnvironmentVariable("FF9_WORLDMAP_DIR");
+    static readonly System.Collections.Generic.HashSet<string> exported = new();
+
+    static void WorldMapInfo(StringBuilder b) {
+        var ui = Type.GetType("WMUIData, Assembly-CSharp");
+        if (ui == null) return;
+        try {
+            int active = Convert.ToInt32(Get(ui, "ActiveMapNo") ?? 1);
+            string name = active == 1 ? "world_map_full_all" : "world_map_full_mistcontinent";
+            b.Append(",\"wmap\":"); Str(b, name);
+            if (Get(ui, "MainCharacterPosition") is UnityEngine.Vector2 pos) b.Append($",\"wx\":{pos.x.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"wy\":{pos.y.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            b.Append(",\"wrot\":").Append(Convert.ToSingle(Get(ui, "MainCharacterRotationY") ?? 0f).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (mapDir != null && exported.Add(name)) ExportMap(name);
+        } catch (Exception e) { if (!failedOnce) { failedOnce = true; Log.Warn("companion world map: " + e.Message); } }
+    }
+
+    static void ExportMap(string name) {
+        string outPath = System.IO.Path.Combine(mapDir!, name + ".png");
+        if (System.IO.File.Exists(outPath)) return;
+        var am = Type.GetType("AssetManager, Assembly-CSharp")!;
+        var load = Array.Find(am.GetMethods(F), m => m.Name == "Load" && m.IsGenericMethodDefinition && m.GetParameters().Length == 2)!
+            .MakeGenericMethod(typeof(UnityEngine.Sprite));
+        var sprite = load.Invoke(null, new object[] { "EmbeddedAsset/UI/Sprites/" + name, false }) as UnityEngine.Sprite;
+        var ns = Gfx.Sprites.Of(sprite);
+        var tex = ns?.Texture == null ? null : Gfx.Textures.OfOrNull(ns.Texture);
+        if (ns == null || tex?.Pixels == null) { Log.Warn($"world map {name}: no pixels"); return; }
+        int x0 = (int)ns.TextureRect.x, y0 = (int)ns.TextureRect.y, w = (int)ns.TextureRect.width, h = (int)ns.TextureRect.height;
+        if (w <= 0 || h <= 0) { x0 = 0; y0 = 0; w = tex.Width; h = tex.Height; }
+        var px = new byte[w * h * 4];
+        for (int y = 0; y < h; y++) Buffer.BlockCopy(tex.Pixels, ((y0 + y) * tex.Width + x0) * 4, px, y * w * 4, w * 4);
+        System.IO.Directory.CreateDirectory(mapDir!);
+        Gfx.Png.Write(outPath, px, w, h, flipY: true);
+        Log.Info($"world map {name} {w}x{h} -> {outPath}");
+    }
+
     static void Str(StringBuilder b, string s) {
         b.Append('"');
         foreach (char c in s) {
@@ -75,6 +113,7 @@ public static class Companion {
             cine = mbg != null && Get(mbg, "played") is true && mode != 2;
         } catch { }
         b.Append(",\"cine\":").Append(cine ? 1 : 0);
+        if (mode == 3) WorldMapInfo(b);
         // the party (outside battle) from the save data; in battle, from the battle units
         if (mode == 2) {
             object? battle = Get(Get(ssType, "Battle"), "FF9Battle");
