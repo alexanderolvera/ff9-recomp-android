@@ -131,3 +131,10 @@
   design), in-game menu and Item screen, Smooth 60 fields and battles, battles 4 6 21 52 73 300 clean.
 - Rumble: the game calls XInputGamePadSetState only where a scene has a vibration track (none seen yet;
   the host logs "rumble l r").
+- Opening-movie error (field 70, FieldMapActorController.MovePC IL_061f): Memoria's own line
+  `if (Configuration.Control.PSXMovementMethod) actualMoveVec *= this.fieldMap.walkMesh.GetTriangleSlopeFactor(...)`
+  has no null check and field 70 has no walk mesh by design (HonoluluFieldMain guards it elsewhere).
+  A Memoria bug, not the engine's; harmless (the game carries on).
+- `FF9_IL_DUMP=Type::Method:fromHex:toHex`: prints a game method's IL with tokens resolved (on the device;
+  no .NET runtime on the PC). `FF9_WARP_WORLD=frame:wldMapNo`: rough world-map switch for tests.
+- Rumble reaches the game's XInput path (pad reported connected); FF9 vibrates only at scripted moments.

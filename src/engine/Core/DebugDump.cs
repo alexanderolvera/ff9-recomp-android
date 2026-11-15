@@ -167,7 +167,45 @@ public static class DebugDump {
         Console.WriteLine($"warp: world map {Get(ff9, "wldMapNo")}, field nextMode {Get(field, "nextMode")}");
     }
 
+    // FF9_IL_DUMP=Type::Method:fromHex:toHex (debugging): the method's IL in that range, with
+    // tokens resolved, printed once at start
+    public static void IlDump() {
+        var spec = Environment.GetEnvironmentVariable("FF9_IL_DUMP");
+        if (spec == null) return;
+        try {
+            var parts = spec.Split(':');
+            var t = typeof(FF9StateSystem).Assembly.GetType(parts[0]);
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+            var m = Array.Find(t!.GetMethods(flags), x => x.Name == parts[2]);
+            byte[] il = m!.GetMethodBody()!.GetILAsByteArray()!;
+            int from = Convert.ToInt32(parts[3], 16), to = Convert.ToInt32(parts[4], 16);
+            var one = new System.Collections.Generic.Dictionary<short, System.Reflection.Emit.OpCode>();
+            foreach (var f in typeof(System.Reflection.Emit.OpCodes).GetFields()) { var op = (System.Reflection.Emit.OpCode)f.GetValue(null)!; one[op.Value] = op; }
+            int i = 0;
+            while (i < il.Length) {
+                int at = i; short v = il[i++];
+                if (v == 0xFE) v = (short)(0xFE00 | il[i++]);
+                var op = one[v];
+                int sz = op.OperandType switch {
+                    System.Reflection.Emit.OperandType.InlineNone => 0,
+                    System.Reflection.Emit.OperandType.ShortInlineBrTarget or System.Reflection.Emit.OperandType.ShortInlineI or System.Reflection.Emit.OperandType.ShortInlineVar => 1,
+                    System.Reflection.Emit.OperandType.InlineVar => 2,
+                    System.Reflection.Emit.OperandType.InlineI8 or System.Reflection.Emit.OperandType.InlineR => 8,
+                    System.Reflection.Emit.OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, i),
+                    _ => 4 };
+                string arg = "";
+                if (op.OperandType is System.Reflection.Emit.OperandType.InlineField or System.Reflection.Emit.OperandType.InlineMethod or System.Reflection.Emit.OperandType.InlineType or System.Reflection.Emit.OperandType.InlineTok)
+                    try { var mem = m.Module.ResolveMember(BitConverter.ToInt32(il, i), t.IsGenericType ? t.GetGenericArguments() : null, null); arg = mem!.DeclaringType?.Name + "::" + mem.Name; } catch (Exception e) { arg = "?" + e.GetType().Name; }
+                else if (sz == 1) arg = il[i].ToString();
+                else if (sz == 4 && op.OperandType != System.Reflection.Emit.OperandType.InlineSwitch) arg = BitConverter.ToInt32(il, i).ToString();
+                i += sz;
+                if (at >= from && at <= to) Console.WriteLine($"il IL_{at:x4} {op.Name} {arg}");
+            }
+        } catch (Exception e) { Console.WriteLine("il dump failed: " + e); }
+    }
+
     public static void Tick() {
+        if (Clock.Frame == 2) IlDump();
         if (warpWorld != null && int.TryParse(warpWorld.Split(':')[0], out int wf) && Clock.Frame == wf)
             try { WarpWorld(); } catch (Exception e) { Console.WriteLine("warp failed: " + e); }
         if (Clock.Frame == nameTestAt) NameTest();
