@@ -17,7 +17,9 @@ import java.util.List;
  * order they were added, on a worker thread, while the launcher stays usable. One queue per
  * process. Waiting and running items are kept in files/mods/queue.txt (one folder name per
  * line), so a queue cut short carries on the next time the launcher opens; the running
- * download resumes from its partial file.
+ * download resumes from its partial file. While it works, QueueService keeps the app running in
+ * the background, with Pause in its notification. A paused queue (files/mods/queue.paused) stays
+ * paused until Continue, also across a restart.
  */
 final class DownloadQueue {
     private static final String TAG = "FF9Mods";
@@ -54,10 +56,46 @@ final class DownloadQueue {
     private Thread worker;
     private Runnable listener;                               // main thread only
     private boolean notifyPosted;
+    private final File pausedFile;
+    private volatile boolean paused;
 
     private DownloadQueue(Context c) {
         ctx = c;
         saveFile = new File(ModCatalog.dir(c), "queue.txt");
+        pausedFile = new File(ModCatalog.dir(c), "queue.paused");
+        paused = pausedFile.isFile();
+    }
+
+    boolean paused() { return paused; }
+
+    /** The worker is running (a download, or waiting for the game to close). */
+    synchronized boolean working() { return worker != null; }
+
+    /** Pause: the running download stops and keeps its partial file; nothing else starts. */
+    synchronized void pause() {
+        if (paused) return;
+        paused = true;
+        try { pausedFile.getParentFile().mkdirs(); pausedFile.createNewFile(); } catch (Exception ignored) { }
+        for (Item it : items) if (it.state == State.QUEUED) it.phase = "Paused";
+        if (running() != null) ModDownloader.cancel();
+        changed();
+    }
+
+    /** Continue a paused queue. */
+    synchronized void resume() {
+        if (!paused) return;
+        paused = false;
+        pausedFile.delete();
+        for (Item it : items) if (it.state == State.QUEUED) it.phase = "Waiting";
+        startWorker();
+        changed();
+    }
+
+    private void startWorker() {      // guarded by this
+        if (worker != null || paused || pendingCount() == 0) return;
+        worker = new Thread(this::work, "mod-downloads");
+        worker.start();
+        QueueService.start(ctx);
     }
 
     private void restore() {
@@ -70,7 +108,7 @@ final class DownloadQueue {
                     ModCatalog.Mod m = ModCatalog.byFolder(ctx, folder);
                     if (m == null) continue;
                     keep.add(ModDownloader.archive(ctx, m).getName());
-                    add(m, ModCatalog.installed(ctx, m));
+                    queue(m, ModCatalog.installed(ctx, m));
                 }
         } catch (Exception e) {
             Log.w(TAG, "download queue unreadable: " + e);
@@ -103,17 +141,22 @@ final class DownloadQueue {
         return null;
     }
 
-    /** Queue a mod (no-op when it is already waiting or running). Returns true when added. */
+    /** Queue a mod (no-op when it is already waiting or running). Returns true when added. A paused queue goes on. */
     synchronized boolean add(ModCatalog.Mod m, boolean update) {
+        if (!queue(m, update)) return false;
+        if (paused) resume();
+        return true;
+    }
+
+    private synchronized boolean queue(ModCatalog.Mod m, boolean update) {
         if (pending(m) != null) return false;
         for (int i = items.size() - 1; i >= 0; i--) if (items.get(i).mod.folder.equalsIgnoreCase(m.folder)) items.remove(i);
-        items.add(new Item(m, update));
+        Item it = new Item(m, update);
+        if (paused) it.phase = "Paused";
+        items.add(it);
         save();
         changed();
-        if (worker == null) {
-            worker = new Thread(this::work, "mod-downloads");
-            worker.start();
-        }
+        startWorker();
         return true;
     }
 
@@ -150,6 +193,7 @@ final class DownloadQueue {
 
     private Item next() {
         synchronized (this) {
+            if (paused) { worker = null; return null; }
             for (Item it : items) if (it.state == State.QUEUED) { it.state = State.RUNNING; it.phase = "Starting"; changed(); return it; }
             worker = null;          // the next add() starts a new worker
             return null;
@@ -166,11 +210,12 @@ final class DownloadQueue {
                 continue;
             }
             // the game must not be reading the folder being replaced
-            while (TestControl.gamePid(ctx) > 0) {
+            while (TestControl.gamePid(ctx) > 0 && !paused) {
                 cur.phase = "Waiting for the game to close";
                 changed();
                 try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
             }
+            if (paused) { requeue(cur); continue; }
             try {
                 ModDownloader.install(ctx, m, (phase, got, total) -> {
                     cur.phase = phase;
@@ -180,10 +225,20 @@ final class DownloadQueue {
                 });
                 finish(cur, State.DONE, null);
             } catch (Throwable e) {        // incl. OutOfMemoryError: fail the item, never the app
+                if (paused && "cancelled".equals(e.getMessage())) { requeue(cur); continue; }   // Pause: its download is kept
                 String msg = e.getMessage() != null ? e.getMessage() : String.valueOf(e);
                 finish(cur, "cancelled".equals(msg) ? State.CANCELLED : State.FAILED, "cancelled".equals(msg) ? null : msg);
             }
         }
+    }
+
+    /** Paused while running: the item waits again. */
+    private synchronized void requeue(Item it) {
+        it.state = State.QUEUED;
+        it.phase = "Paused";
+        it.error = null;
+        save();
+        changed();
     }
 
     private void finish(Item it, State st, String error) {

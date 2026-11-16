@@ -49,6 +49,8 @@ and I would rather you know before you install it.
   - browse and search Memoria's mod catalog, with install, update and a download queue;
   - set mod order and turn mods on and off;
   - settings, save states, achievements and Report a problem.
+  Downloads, imports and moves go on with the app in the background, with Pause and Continue
+  (in the launcher and in the notification). A job Android stopped goes on where it was.
   It plays FF9's own menu sounds, taken from your game files, and works with a controller.
 - Moguri Mod and the rest of Memoria's catalog. That includes the 2K and 4K video packs, which
   play at full resolution.

@@ -127,14 +127,18 @@ final class GameInstall {
                     out.mkdirs();
                     copyTree(cr, tree, id, out, r, p, count);
                 } else {
-                    if (out.isFile() && out.length() == size) continue;    // resumable
+                    JobService.checkPause();
+                    if (out.isFile() && out.length() == size) continue;    // copied before a pause or a stop
                     p.update("Copying " + r);
+                    File part = new File(out.getPath() + ".part");      // whole files only: a cut copy is redone
                     try (InputStream in = cr.openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, id));
-                         OutputStream o = new FileOutputStream(out)) {
+                         OutputStream o = new FileOutputStream(part)) {
                         byte[] buf = new byte[1 << 20];
                         int n;
-                        while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+                        while ((n = in.read(buf)) > 0) { JobService.checkPause(); o.write(buf, 0, n); }
                     }
+                    if (out.exists()) out.delete();
+                    if (!part.renameTo(out)) throw new IOException("cannot write " + out);
                     count[0]++;
                     count[1] += size;
                 }

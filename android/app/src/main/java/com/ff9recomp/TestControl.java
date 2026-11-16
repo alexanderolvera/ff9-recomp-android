@@ -28,6 +28,9 @@ import java.util.Map;
  * SET takes typed extras (--ei / --ez / --es); unknown names are refused.
  */
 public class TestControl extends BroadcastReceiver {
+    private static volatile boolean memoriaBusy;
+    private static volatile String memoriaStatus = "";
+
     static final String PREFIX = "com.ff9recomp.test.";
     static final String EXTRA_PLAY = "test_play";
 
@@ -101,7 +104,8 @@ public class TestControl extends BroadcastReceiver {
             }
             case "STEAM_DOWNLOAD": {
                 // tests download into a scratch folder only, never the player's game:
-                // --es op download|memoria|stop|status --es dir ABS (logcat tags FF9SteamFiles, FF9Memoria)
+                // --es op download|memoria|pause|continue|status|queue_pause|queue_continue --es dir ABS
+                // (logcat tags FF9SteamFiles, FF9Memoria, FF9Jobs). The download runs in JobService.
                 String op = intent.getStringExtra("op") != null ? intent.getStringExtra("op") : "status";
                 String dir = intent.getStringExtra("dir");
                 GameInstall gi = new GameInstall(ctx);
@@ -111,26 +115,45 @@ public class TestControl extends BroadcastReceiver {
                     if (d.equals(gi.game.getCanonicalFile()) || d.getPath().startsWith(gi.game.getCanonicalPath() + "/")) {
                         out.put("error", "not the player's game folder"); break;
                     }
-                    if (op.equals("download")) SteamFiles.start(ctx, d);
-                    else if (!SteamFiles.busy) {
-                        SteamFiles.busy = true;
-                        SteamFiles.cancel.set(false);
+                    if (op.equals("download")) out.put("started", JobService.start(ctx, JobService.STEAM, d.getPath()));
+                    else if (!memoriaBusy) {
+                        memoriaBusy = true;
                         new Thread(() -> {
                             try {
                                 MemoriaInstall m = new MemoriaInstall(gi);
-                                m.fetch(w -> SteamFiles.status = w, SteamFiles.cancel);
-                                m.install(d, w -> SteamFiles.status = w);
-                                SteamFiles.status = "memoria installed";
+                                m.fetch(w -> memoriaStatus = w, new java.util.concurrent.atomic.AtomicBoolean());
+                                m.install(d, w -> memoriaStatus = w);
+                                memoriaStatus = "memoria installed";
                             } catch (Throwable e) {
                                 android.util.Log.e("FF9Memoria", "test install", e);
-                                SteamFiles.status = "memoria failed: " + e;
+                                memoriaStatus = "memoria failed: " + e;
                             }
-                            SteamFiles.busy = false;
+                            memoriaBusy = false;
                         }).start();
                     }
-                } else if (op.equals("stop")) SteamFiles.cancel.set(true);
-                out.put("busy", SteamFiles.busy);
-                out.put("status", SteamFiles.status);
+                } else if (op.equals("stop") || op.equals("pause")) JobService.pause();
+                else if (op.equals("continue")) out.put("continued", JobService.resume(ctx));
+                else if (op.equals("test_memoria")) out.put("started", JobService.start(ctx, JobService.TEST_MEMORIA, null));
+                else if (op.equals("discard")) JobService.forget(ctx);
+                else if (op.equals("queue_pause")) DownloadQueue.get(ctx).pause();
+                else if (op.equals("queue_continue")) DownloadQueue.get(ctx).resume();
+                else if (op.equals("queue_add")) {          // --es folder <InstallationPath>
+                    ModCatalog.Mod m = ModCatalog.byFolder(ctx, String.valueOf(intent.getStringExtra("folder")));
+                    out.put("added", m != null && DownloadQueue.get(ctx).add(m, false));
+                } else if (op.equals("queue_cancel")) {
+                    DownloadQueue q = DownloadQueue.get(ctx);
+                    for (DownloadQueue.Item it : q.snapshot()) q.cancel(it);
+                }
+                out.put("busy", JobService.busy());
+                out.put("running", String.valueOf(JobService.running));
+                out.put("pending", String.valueOf(JobService.pending(ctx)));
+                out.put("paused", JobService.paused);
+                out.put("percent", JobService.percent);
+                out.put("status", JobService.status);
+                out.put("memoria", memoriaBusy + " " + memoriaStatus);
+                DownloadQueue q = DownloadQueue.get(ctx);
+                DownloadQueue.Item it = q.running();
+                out.put("queue", (q.paused() ? "paused " : "") + q.pendingCount() + " pending" + (it != null ? ", " + it.mod.folder + " " + it.phase + " " + it.percent() + "%" : ""));
                 break;
             }
             default:

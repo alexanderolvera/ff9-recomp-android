@@ -290,6 +290,9 @@ public class LauncherActivity extends Activity {
         Updater.Release up = Updater.available;
         if (up != null) s.append("   ·   Update ").append(up.version).append(" is out (Game files)");
         String exit = Reports.lastGameExit(this);
+        String pend = JobService.pending(this);
+        if (JobService.busy()) s.append("\n").append(JobService.status);
+        else if (pend != null) s.append("\n").append(JobService.title(pend)).append(" is paused: Continue is under Game files.");
         if (exit != null && exit.startsWith("crashed")) s.append("\nThe game last ").append(exit).append(": Report a problem sends the details.");
         status.setText(s);
     }
@@ -316,7 +319,7 @@ public class LauncherActivity extends Activity {
 
     private void play(boolean autoload) {
         if (busy) return;
-        if (SteamFiles.busy) { status.setText("Wait for the Steam download to finish, or stop it."); return; }
+        if (JobService.busy()) { status.setText(JobService.title(JobService.running) + ": wait for it to finish, or pause it (Game files)."); return; }
         if (!ready()) { show("game"); return; }
         try {
             Settings.apply(this, install.game);
@@ -757,7 +760,7 @@ public class LauncherActivity extends Activity {
     /** "Queued", "Downloading 40%", "Unpacking"; long: with sizes. */
     private String queueLabel(DownloadQueue.Item q, boolean longForm) {
         switch (q.state) {
-            case QUEUED: return "Queued";
+            case QUEUED: return DownloadQueue.get(this).paused() ? "Paused" : "Queued";
             case RUNNING:
                 int pc = q.percent();
                 if (!"Downloading".equals(q.phase)) return q.phase + (pc >= 0 && longForm ? " " + pc + "%" : "...");
@@ -926,11 +929,17 @@ public class LauncherActivity extends Activity {
         LinearLayout col = column();
         col.addView(heading("Downloads"));
         col.addView(note("Mods download one at a time, top first, while the launcher stays usable. A mod being replaced waits for the game to close. "
-                + "If the launcher is closed, the queue carries on (and the download resumes) when it opens again."));
+                + "They go on with the launcher in the background (the notification has Pause). "
+                + "If Android stops the app, the queue carries on, and the download resumes, when the launcher opens again."));
         ViewGroup bar = buttons();
         bar.addView(button("Get mods...", v -> show("catalog")));
         bar.addView(button("Clear finished", v -> { DownloadQueue.get(this).clearFinished(); refresh(); }));
+        DownloadQueue dq = DownloadQueue.get(this);
+        boolean held = dq.paused() && dq.pendingCount() > 0;
+        if (held) bar.addView(button("Continue", v -> { askNotifications(); dq.resume(); refresh(); }));
+        else if (dq.pendingCount() > 0) bar.addView(button("Pause", v -> { dq.pause(); refresh(); }));
         col.addView(bar);
+        if (held) col.addView(text("Paused. Continue goes on where the downloads stopped.", 14, ACCENT));
         progressViews.clear();
         List<DownloadQueue.Item> items = DownloadQueue.get(this).snapshot();
         if (items.isEmpty()) col.addView(text("Nothing downloading. Pick mods under Get mods.", 16, DIM));
@@ -1205,13 +1214,15 @@ public class LauncherActivity extends Activity {
     private View gamePage() {
         LinearLayout col = column();
         col.addView(heading("Game files"));
+        View job = jobSection();       // before "imported": a paused import over an old copy is not done
+        if (job != null) col.addView(job);
         boolean has = install.hasGame();
         String missing = has ? install.missingMessage() : null;
         col.addView(text(!has ? "No game imported yet." : missing != null ? missing
                 : "Your FINAL FANTASY IX is imported" + (install.hasMoguri() ? ", with Moguri Mod." : "."), 15, has && missing == null ? ACCENT : TEXT));
         col.addView(note("Pick your FINAL FANTASY IX folder (the Steam copy, with Memoria installed; Moguri Mod if you use it). It is copied into the app once; nothing from the game ships in the app."));
         ViewGroup actions = buttons();
-        actions.addView(button(has ? "Import again" : "Import game folder", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME)));
+        actions.addView(button(has ? "Import again" : "Import game folder", v -> pickGame()));
         col.addView(actions);
 
         TextView hd = heading("Download from Steam");
@@ -1221,10 +1232,8 @@ public class LauncherActivity extends Activity {
                 + "then installs Memoria " + MemoriaInstall.VERSION + " from its GitHub page. A stopped download goes on where it was; "
                 + (has ? "Repair downloads only the files that are missing or damaged, and keeps your mods, saves and Memoria settings." : "Moguri Mod can be added from Mods afterwards.")));
         ViewGroup dl = buttons();
-        if (SteamFiles.busy) dl.addView(button("Stop the download", v -> SteamFiles.cancel.set(true)));
-        else dl.addView(button(has ? "Repair from Steam" : "Download from Steam", v -> steamDownload()));
+        dl.addView(button(has ? "Repair from Steam" : "Download from Steam", v -> steamDownload()));
         col.addView(dl);
-        if (SteamFiles.busy) pollDownload();
 
         TextView hs = heading("Saves");
         hs.setPadding(0, dp(14), 0, dp(4));
@@ -1255,40 +1264,107 @@ public class LauncherActivity extends Activity {
     }
 
     private void steamDownload() {
-        if (SteamFiles.busy) return;
         if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first."); return; }
         if (!new SteamLink(this).signedIn()) { status.setText("Sign in to Steam first, then press Download again."); steamSignIn(); return; }
-        SteamFiles.start(this, null);
+        startJob(JobService.STEAM, null);
+    }
+
+    // ------------------------------------------------------------------ long jobs (JobService)
+
+    /** The running job with Pause, or the stopped one with Continue; null when there is none. */
+    private View jobSection() {
+        String run = JobService.running, pend = JobService.pending(this);
+        if (run == null && pend == null) return null;
+        LinearLayout box = column();
+        box.setPadding(0, dp(4), 0, dp(10));
+        TextView t = text(JobService.title(run != null ? run : pend), 17, ACCENT);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(t);
+        ViewGroup b = buttons();
+        if (run != null) {
+            TextView st = text(JobService.status, 14, TEXT);
+            box.addView(st);
+            android.widget.ProgressBar pb = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            pb.setMax(100);
+            pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            pb.setIndeterminate(JobService.percent < 0);
+            box.addView(pb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)));
+            box.addView(note("It goes on with the launcher in the background or the screen off; the notification shows how far it is. "
+                    + "Some steps stay at one place for minutes (checking the files already here, installing Memoria). "
+                    + "If Android still stops it, set FF9Recomp's battery use to Unrestricted in Android's app settings, then Continue."));
+            Button p = button("Pause", v -> { JobService.pause(); status.setText("Pausing..."); });
+            p.setTag("focus:job");
+            b.addView(p);
+            jobGen++;
+            int gen = jobGen;
+            content.postDelayed(() -> jobTick(gen, st, pb), 500);
+        } else {
+            box.addView(text((JobService.paused ? "Paused." : "Stopped before it finished (paused, or Android closed the app).")
+                    + " Continue goes on where it stopped; nothing done so far is lost.", 14, TEXT));
+            Button c = button("Continue", v -> continueJob());
+            c.setTag("focus:job");
+            b.addView(c);
+            String what = pend.equals(JobService.STEAM) ? "download" : pend.equals(JobService.IMPORT) ? "import" : "move";
+            b.addView(button("Discard", v -> ask("Discard the " + what,
+                    what.equals("move") ? "The copy made so far is removed; your files stay where they are."
+                            : "What it already copied stays on the device, and starting it again skips those files.",
+                    "Discard", () -> { JobService.forget(this); refresh(); })));
+        }
+        box.addView(b);
+        return box;
+    }
+
+    private int jobGen;
+
+    /** The running job's progress on the Game files page, until it ends (then the page shows how). */
+    private void jobTick(int gen, TextView st, android.widget.ProgressBar pb) {
+        if (gen != jobGen || isFinishing()) return;
+        if (JobService.busy()) {
+            st.setText(JobService.status);
+            pb.setIndeterminate(JobService.percent < 0);
+            if (JobService.percent >= 0) pb.setProgress(JobService.percent);
+            if (page.equals("game")) content.postDelayed(() -> jobTick(gen, st, pb), 500);
+            return;
+        }
+        install = new GameInstall(this);
+        if (page.equals("game")) refresh();
+        status.setText(JobService.status);
+        if (JobService.pending(this) == null && page.equals("game")) message("Game files", JobService.status);
+    }
+
+    private void startJob(String kind, String arg) {
+        askNotifications();
+        if (!JobService.start(this, kind, arg)) { status.setText(JobService.title(JobService.running) + " is already running."); return; }
+        show("game");
+        focusContent();
+    }
+
+    private void continueJob() {
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first."); return; }
+        askNotifications();
+        JobService.resume(this);
         refresh();
         focusContent();
     }
 
-    private final Runnable downloadTick = new Runnable() {
-        @Override public void run() {
-            status.setText(SteamFiles.status);
-            if (SteamFiles.busy) content.postDelayed(this, 500);
-            else { install = new GameInstall(LauncherActivity.this); refresh(); status.setText(SteamFiles.status); }
-        }
-    };
+    /** Android 13+: the progress notification needs the player's yes (asked once). */
+    private void askNotifications() {
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[] { android.Manifest.permission.POST_NOTIFICATIONS }, 3);
+    }
 
-    private void pollDownload() { content.removeCallbacks(downloadTick); content.postDelayed(downloadTick, 500); }
+    private void pickGame() {
+        if (JobService.busy()) { status.setText(JobService.title(JobService.running) + " is running: pause it first."); return; }
+        startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME);
+    }
 
     private void moveStorage() {
         boolean toSd = !Storage.onSd(this);
         if (toSd && Storage.sdRoot(this) == null) { status.setText("No SD card is inserted."); return; }
         if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first."); return; }
-        busy = true;
-        new Thread(() -> {
-            String msg;
-            try {
-                Storage.move(this, toSd, what -> runOnUiThread(() -> status.setText(what)));
-                msg = toSd ? "Your files are on the SD card now." : "Your files are in internal storage now.";
-            } catch (Exception e) {
-                msg = "Moving failed, nothing changed: " + e.getMessage();
-            }
-            String m = msg;
-            runOnUiThread(() -> { busy = false; install = new GameInstall(this); refresh(); focusContent(); status.setText(m); message("Storage", m); });
-        }).start();
+        if (JobService.busy()) { status.setText(JobService.title(JobService.running) + " is running: pause it first."); return; }
+        startJob(toSd ? JobService.TO_SD : JobService.TO_INTERNAL, null);
     }
 
     private void checkUpdates(boolean loud) {
@@ -1455,22 +1531,10 @@ public class LauncherActivity extends Activity {
         if (req == PICK_SAVE && res == RESULT_OK && data != null) { importSave(data.getData()); return; }
         if (req != PICK_GAME || res != RESULT_OK || data == null) return;
         Uri tree = data.getData();
-        busy = true;
-        new Thread(() -> {
-            String err = null;
-            try {
-                install.importFrom(tree, what -> runOnUiThread(() -> status.setText(what)));
-            } catch (Exception e) {
-                err = e.getMessage();
-            }
-            String e2 = err;
-            runOnUiThread(() -> {
-                busy = false;
-                refresh();
-                if (e2 != null) message("Could not import the game", e2);
-                else message("Game imported", "Your FINAL FANTASY IX is ready" + (install.hasMoguri() ? ", with Moguri Mod." : ".") + " Press Play (or Start).");
-            });
-        }).start();
+        // kept, so an import that was paused (or stopped by Android) can read the folder again later
+        try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+        catch (Exception e) { android.util.Log.w("FF9Launcher", "folder permission not kept: " + e); }
+        startJob(JobService.IMPORT, tree.toString());
     }
 
     /** A PC save file (SavedData_ww.dat, the Steam release's: the same format the game uses here). */

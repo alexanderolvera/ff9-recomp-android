@@ -68,41 +68,6 @@ final class SteamFiles {
 
     interface Progress { void update(String what); }
 
-    // the launcher's download: one at a time, its progress kept across pages
-    static volatile boolean busy;
-    static volatile String status = "";
-    static final AtomicBoolean cancel = new AtomicBoolean();
-
-    /** Starts the download in the background (the launcher polls status/busy). */
-    static void start(android.content.Context ctx, File dir) {
-        if (busy) return;
-        busy = true;
-        cancel.set(false);
-        status = "Starting";
-        final android.content.Context app = ctx.getApplicationContext();
-        new Thread(() -> {
-            String r;
-            if (!new SteamLink(app).signedIn()) {
-                status = "Sign in to Steam first, then download again.";
-                busy = false;
-                return;
-            }
-            try {
-                GameInstall gi = new GameInstall(app);
-                String err = new SteamFiles(new SteamLink(app)).downloadGame(gi, dir != null ? dir : gi.game, w -> status = w, cancel);
-                r = err == null ? "FINAL FANTASY IX is downloaded from Steam, with Memoria " + MemoriaInstall.VERSION + "."
-                        : err.equals("stopped") ? "Download stopped. Download again to go on where it stopped."
-                        : "Not downloaded: " + err + ".";
-            } catch (Throwable e) {
-                Log.e(TAG, "download", e);
-                r = "The download stopped: " + SteamLink.message(e) + ". Download again to go on where it stopped.";
-            }
-            Log.i(TAG, r);
-            status = r;
-            busy = false;
-        }, "steam-download").start();
-    }
-
     static final String NOT_OWNED = "this Steam account does not own FINAL FANTASY IX";
 
     private final SteamLink link;
@@ -233,8 +198,10 @@ final class SteamFiles {
                     }));
                 }
                 pool.shutdown();
-                while (!pool.awaitTermination(500, TimeUnit.MILLISECONDS))
+                while (!pool.awaitTermination(500, TimeUnit.MILLISECONDS)) {
+                    if (tot > 0) JobService.percent = (int) (done.get() * 100 / tot);
                     p.update("Downloading from Steam: " + gb(done.get()) + " of " + gb(tot) + " GB");
+                }
                 if (cancel.get()) return "stopped";
                 if (!errors.isEmpty()) throw new IOException(errors.get(0));
             }

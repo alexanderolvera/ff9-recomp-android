@@ -80,7 +80,7 @@ final class MemoriaInstall {
                     o.write(b, 0, n);
                     have += n;
                     long mb = have >> 20;
-                    if (mb != shown) { shown = mb; p.update("Downloading Memoria " + VERSION + ": " + mb + " of " + (SIZE >> 20) + " MB"); }
+                    if (mb != shown) { shown = mb; JobService.percent = (int) (have * 100 / SIZE); p.update("Downloading Memoria " + VERSION + ": " + mb + " of " + (SIZE >> 20) + " MB"); }
                 }
             }
         }

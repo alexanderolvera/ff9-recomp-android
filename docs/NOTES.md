@@ -205,3 +205,30 @@
 - Tested 2026-11-15 on the Thor: the 2K pack's FMV001 as a test mod, 1799 of 1800 frames, 0.1 ms
   average on the game thread, none late; 16 FPS counter during movies as with the originals.
 - files/env.txt also passes FF9_TRACE_* (FF9_TRACE_MOVIE=1 logs each movie's path and size).
+
+## Long jobs in the background, Pause / Continue (FF7Recomp GitHub #53, its 1.1.13)
+
+- `JobService` (a foreground service, type dataSync, with a partial wake lock) runs the launcher's
+  long jobs one at a time: the Steam download, importing the game folder, and moving to or from
+  the SD card. Its notification shows the progress and has Pause; a paused or stopped job's
+  notification has Continue. The state is static (`running`, `status`, `percent`, `paused`), and
+  the launcher reads it.
+- The job (its kind and argument) is kept in the launcher's prefs (`job_kind`, `job_arg`) until it
+  finishes. A job that was paused, or stopped by Android or by an app update, shows **Continue**
+  at the top of Game files, before the "imported" line: a paused import over an older copy is not
+  finished.
+- Resuming: the Steam download skips files whose SHA-1 already matches; the import and the move
+  write `.part` files and rename them, so a file that is there is whole, and both skip those. The
+  import keeps a persistable read grant on the picked folder, so Continue can read it after a
+  restart. Discarding a move deletes its partial copy; discarding a download or an import keeps
+  the files.
+- The mod queue: `QueueService` keeps the process in the foreground while `DownloadQueue` works.
+  Pause stops the running download (its partial archive stays) and is persisted in
+  `files/mods/queue.paused`.
+- Test API: `STEAM_DOWNLOAD --es op pause|continue|discard|test_memoria|queue_add --es folder
+  X|queue_pause|queue_continue|queue_cancel`. `test_memoria` is a JobService job that downloads
+  only Memoria, the first step of the Steam download, so it works without Steam.
+- Tested on the Thor: Pause at 48%, then `am force-stop`, then the launcher shows Continue, which
+  resumes at 51 MB of 87, and the SHA-256 check passes. The queue: Pause, then force-stop, then it
+  is still paused after the restart, then Continue resumes it. A move to the SD card wasn't tried
+  (the card is full), and neither was the import (it needs the folder picker).
