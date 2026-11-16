@@ -31,12 +31,38 @@ final class ModCatalog {
 
     static final class Mod {
         String name = "", version = "", folder = "", author = "", description = "", category = "", url = "", website = "", format = "";
+        String releaseDate = "", patchNotes = "", preview = "", minMemoria = "";
+        final List<String> incompatible = new ArrayList<>();
         int priority;
+
+        /** The download size when the patch notes give one ("Download Size: 3,2GB"), else "". */
+        String sizeText() {
+            java.util.regex.Matcher mt = java.util.regex.Pattern.compile("(?i)download size\\s*:\\s*([0-9.,]+\\s*[KMG]B)").matcher(patchNotes);
+            return mt.find() ? mt.group(1).replace(" ", "") : "";
+        }
     }
 
     private ModCatalog() {}
 
-    static File dir(Context c) { return new File(new GameInstall(c).files, "mods"); }
+    // the storage paths and the parsed catalog, cached: finding the app's storage asks Android
+    // each time, and the Get mods page asks for every mod (it took seconds to draw)
+    private static File filesDir, gameDir;
+    private static long pathsAt = -1;
+    private static List<Mod> parsed;
+    private static long parsedStamp;
+
+    private static synchronized void paths(Context c) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (pathsAt < 0 || now - pathsAt > 2000) {
+            GameInstall gi = new GameInstall(c);
+            filesDir = gi.files;
+            gameDir = gi.game;
+            pathsAt = now;
+        }
+    }
+
+    static File game(Context c) { paths(c); return gameDir; }
+    static File dir(Context c) { paths(c); return new File(filesDir, "mods"); }
     static File cached(Context c) { return new File(dir(c), "catalog.xml"); }
 
     /** Downloads the catalog (on the caller's thread). */
@@ -57,8 +83,14 @@ final class ModCatalog {
     }
 
     /** The cached catalog's mods (empty when it was never fetched). */
-    static List<Mod> mods(Context c) {
-        try { return parse(cached(c)); } catch (Exception e) { return new ArrayList<>(); }
+    static synchronized List<Mod> mods(Context c) {
+        File f = cached(c);
+        long stamp = f.isFile() ? f.lastModified() ^ (f.length() << 20) : 0;
+        if (parsed == null || stamp != parsedStamp) {
+            try { parsed = parse(f); } catch (Exception e) { parsed = new ArrayList<>(); }
+            parsedStamp = stamp;
+        }
+        return new ArrayList<>(parsed);
     }
 
     private static List<Mod> parse(File f) throws IOException {
@@ -94,6 +126,11 @@ final class ModCatalog {
                         case "DownloadUrl": m.url = t; break;
                         case "Website": m.website = t; break;
                         case "DownloadFormat": m.format = t; break;
+                        case "ReleaseDate": m.releaseDate = t; break;
+                        case "PatchNotes": m.patchNotes = t; break;
+                        case "PreviewFileUrl": m.preview = t; break;
+                        case "MinimumMemoriaVersion": m.minMemoria = t; break;
+                        case "IncompatibleWith": for (String x : t.split(",")) if (!x.trim().isEmpty()) m.incompatible.add(x.trim()); break;
                         case "Priority": try { m.priority = Integer.parseInt(t); } catch (NumberFormatException ignored) { } break;
                     }
                 }
@@ -104,9 +141,63 @@ final class ModCatalog {
         return out;
     }
 
+    /** How old the cached catalog is, in ms (Long.MAX_VALUE when it was never fetched). */
+    static long age(Context c) {
+        File f = cached(c);
+        return f.isFile() ? System.currentTimeMillis() - f.lastModified() : Long.MAX_VALUE;
+    }
+
+    /** The categories that have mods, in the catalog's order. */
+    static List<String> categories(List<Mod> all) {
+        List<String> out = new ArrayList<>();
+        for (Mod m : all) { String k = m.category.isEmpty() ? "Other" : m.category; if (!out.contains(k)) out.add(k); }
+        return out;
+    }
+
+    /** Every word of query in the name, author, category or description; category null for all. */
+    static List<Mod> search(Context c, List<Mod> all, String query, String category, boolean installedOnly) {
+        String[] words = query == null ? new String[0] : query.toLowerCase(java.util.Locale.ROOT).trim().split("\\s+");
+        List<Mod> out = new ArrayList<>();
+        for (Mod m : all) {
+            if (installedOnly && !installed(c, m)) continue;
+            if (category != null && !category.equals(m.category.isEmpty() ? "Other" : m.category)) continue;
+            String hay = (m.name + " " + m.author + " " + m.category + " " + m.description + " " + m.folder).toLowerCase(java.util.Locale.ROOT);
+            boolean ok = true;
+            for (String w : words) if (!w.isEmpty() && !hay.contains(w)) { ok = false; break; }
+            if (ok) out.add(m);
+        }
+        return out;
+    }
+
+    static Mod byFolder(Context c, String folder) {
+        for (Mod m : mods(c)) if (m.folder.equalsIgnoreCase(folder)) return m;
+        return null;
+    }
+
+    /** Catalog mods with an update. */
+    static List<Mod> updates(Context c) {
+        List<Mod> out = new ArrayList<>();
+        for (Mod m : mods(c)) if (updatable(c, m)) out.add(m);
+        return out;
+    }
+
+    /** The mod folders in the game folder: catalog mods that are installed, then any other
+     *  folder Memoria.ini lists (added by hand on the PC). */
+    static List<String> installedFolders(Context c) {
+        List<String> out = new ArrayList<>();
+        for (String f : enabled(c)) if (new File(game(c), f).isDirectory()) out.add(f);
+        for (Mod m : mods(c)) if (installed(c, m) && !containsIgnoreCase(out, m.folder)) out.add(m.folder);
+        return out;
+    }
+
+    private static boolean containsIgnoreCase(List<String> l, String s) {
+        for (String x : l) if (x.equalsIgnoreCase(s)) return true;
+        return false;
+    }
+
     // ------------------------------------------------------------------ installed mods
 
-    static File folder(Context c, Mod m) { return new File(new GameInstall(c).game, m.folder); }
+    static File folder(Context c, Mod m) { return new File(game(c), m.folder); }
     static boolean installed(Context c, Mod m) { return folder(c, m).isDirectory(); }
 
     /** The version installed by this app (files/mods/<folder>.version), or "" when unknown. */
@@ -154,19 +245,53 @@ final class ModCatalog {
     }
 
     /** Turns a mod on or off; the list is kept in catalog priority order (highest first). */
-    static void setEnabled(Context c, Mod m, boolean on) throws IOException {
+    static void setEnabled(Context c, Mod m, boolean on) throws IOException { setEnabled(c, m.folder, on); }
+
+    /** Turns a folder on or off. The other mods keep the player's order; one turned on goes where
+     *  its catalog priority puts it (above the first mod with a lower one). */
+    static void setEnabled(Context c, String folder, boolean on) throws IOException {
         List<String> folders = enabled(c);
-        folders.removeIf(f -> f.equalsIgnoreCase(m.folder));
-        if (on) folders.add(m.folder);
+        folders.removeIf(f -> f.equalsIgnoreCase(folder));
+        if (on) {
+            List<Mod> all = mods(c);
+            int p = priorityOf(all, folder), at = folders.size();
+            for (int i = 0; i < folders.size(); i++) if (priorityOf(all, folders.get(i)) < p) { at = i; break; }
+            folders.add(at, folder);
+        }
+        write(c, folders);
+    }
+
+    /** Moves an enabled folder up (-1, higher priority) or down (+1). */
+    static void move(Context c, String folder, int dir) throws IOException {
+        List<String> folders = enabled(c);
+        int i = -1;
+        for (int k = 0; k < folders.size(); k++) if (folders.get(k).equalsIgnoreCase(folder)) i = k;
+        int j = i + dir;
+        if (i < 0 || j < 0 || j >= folders.size()) return;
+        Collections.swap(folders, i, j);
+        write(c, folders);
+    }
+
+    /** All installed mods on, in catalog priority order, or all off. */
+    static void setAll(Context c, boolean on) throws IOException {
+        List<String> folders = new ArrayList<>();
+        if (on) {
+            List<Mod> all = mods(c);
+            folders.addAll(installedFolders(c));
+            Collections.sort(folders, (a, b) -> Integer.compare(priorityOf(all, b), priorityOf(all, a)));
+        }
+        write(c, folders);
+    }
+
+    private static void write(Context c, List<String> folders) throws IOException {
         List<Mod> all = mods(c);
-        Collections.sort(folders, (a, b) -> Integer.compare(priorityOf(all, b), priorityOf(all, a)));
         StringBuilder names = new StringBuilder(), prios = new StringBuilder();
         for (String f : folders) {
             if (names.length() > 0) { names.append(", "); prios.append(", "); }
             names.append('"').append(f).append('"');
             prios.append('"').append(priorityOf(all, f)).append('"');
         }
-        File ini = new File(new GameInstall(c).game, "Memoria.ini");
+        File ini = new File(game(c), "Memoria.ini");
         List<String> lines = iniLines(c);
         Settings.put(lines, "Mod", "FolderNames", names.toString());
         Settings.put(lines, "Mod", "Priorities", prios.toString());
@@ -179,7 +304,7 @@ final class ModCatalog {
     }
 
     private static List<String> iniLines(Context c) {
-        File ini = new File(new GameInstall(c).game, "Memoria.ini");
+        File ini = new File(game(c), "Memoria.ini");
         try { return new ArrayList<>(Files.readAllLines(ini.toPath(), StandardCharsets.ISO_8859_1)); }
         catch (IOException e) { return new ArrayList<>(); }
     }

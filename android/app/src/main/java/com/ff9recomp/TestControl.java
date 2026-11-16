@@ -32,6 +32,7 @@ public class TestControl extends BroadcastReceiver {
     static final String EXTRA_PLAY = "test_play";
 
     /** The launcher's settings and their types (Settings.java applies them to Memoria.ini). */
+    static final String TEST_SCREEN = "test_screen";
     static final Map<String, Class<?>> TYPES = new HashMap<>();
     static {
         for (String k : Settings.INTS) TYPES.put(k, Integer.class);
@@ -87,6 +88,15 @@ public class TestControl extends BroadcastReceiver {
                 }
                 out.put("report", to.getAbsolutePath());
                 out.put("entries", names);
+                break;
+            }
+            case "SCREEN": {
+                // the launcher laid out as on another screen, in the Thor's top-left corner:
+                // --es size 640x480@240 (empty: back to the Thor's own); takes effect when it opens again
+                String size = intent.getStringExtra("size");
+                if (size == null || !(size.isEmpty() || size.matches("[0-9]+x[0-9]+@[0-9]+"))) { out.put("error", "size WxH@DPI or empty"); break; }
+                prefs.edit().putString(TEST_SCREEN, size).commit();
+                out.put("screen", size);
                 break;
             }
             case "STEAM_DOWNLOAD": {

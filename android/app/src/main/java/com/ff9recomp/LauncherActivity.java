@@ -56,9 +56,39 @@ public class LauncherActivity extends Activity {
     private Button playButton;
     private final Map<String, Button> nav = new HashMap<>();
     private String page = "settings";
-    private boolean busy, withSaves;
+    private boolean busy, withSaves, smallScreen;
     private ModCatalog.Mod modShown;
     private String testArgs, testLoad;
+
+    private static final int SMALL_WIDTH_DP = 600, COMPACT_WIDTH_DP = 560;
+    private int testW, testH;
+
+    /** Under 600dp wide (640x480 handhelds): the launcher laid out as about 560dp, so the side
+     *  menu, text and buttons fit (FF7Recomp #47). TestControl SCREEN lays it out as another
+     *  screen would, in the top-left corner. */
+    @Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(base);
+        android.util.DisplayMetrics dm = base.getResources().getDisplayMetrics();
+        int wPx = Math.max(dm.widthPixels, dm.heightPixels), dpi = dm.densityDpi;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)x(\\d+)@(\\d+)")
+                .matcher(base.getSharedPreferences("launcher", MODE_PRIVATE).getString(TestControl.TEST_SCREEN, ""));
+        if (m.matches()) {
+            testW = Integer.parseInt(m.group(1));
+            testH = Integer.parseInt(m.group(2));
+            wPx = Math.max(testW, testH);
+            dpi = Integer.parseInt(m.group(3));
+        }
+        if (wPx * 160f / dpi >= SMALL_WIDTH_DP) {
+            if (testW == 0) return;
+        } else smallScreen = true;
+        int want = smallScreen ? Math.max(120, Math.round(wPx * 160f / COMPACT_WIDTH_DP)) : dpi;
+        if (want < dpi || testW > 0) {
+            android.content.res.Configuration o = new android.content.res.Configuration();
+            o.densityDpi = Math.min(want, dpi);
+            applyOverrideConfiguration(o);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -69,12 +99,13 @@ public class LauncherActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(BG);
-        root.setPadding(dp(24), dp(20), dp(24), dp(20));
+        if (smallScreen) root.setPadding(dp(8), dp(6), dp(8), dp(6));
+        else root.setPadding(dp(24), dp(20), dp(24), dp(20));
 
         // left: the title and the command window
         LinearLayout side = column();
         side.setPadding(0, 0, dp(14), 0);
-        TextView title = text("FINAL FANTASY IX", 17, TEXT);
+        TextView title = text("FINAL FANTASY IX", smallScreen ? 13 : 17, TEXT);
         title.setTypeface(Typeface.create("serif", Typeface.BOLD));
         title.setLetterSpacing(0.04f);
         title.setSingleLine(true);
@@ -89,6 +120,8 @@ public class LauncherActivity extends Activity {
         playButton.setTypeface(Typeface.DEFAULT_BOLD);
         menu.addView(playButton);
         menu.addView(menuItem("Mods", "mods"));
+        menu.addView(menuItem("Get mods", "catalog"));
+        menu.addView(menuItem("Downloads", "downloads"));
         menu.addView(menuItem("Save states", "states"));
         menu.addView(menuItem("Achievements", "achievements"));
         menu.addView(menuItem("Settings", "settings"));
@@ -97,11 +130,11 @@ public class LauncherActivity extends Activity {
         Button quit = menuItem("Quit", null);
         quit.setOnClickListener(v -> quit());
         menu.addView(quit);
-        side.addView(menu, new LinearLayout.LayoutParams(dp(200), ViewGroup.LayoutParams.WRAP_CONTENT));
+        side.addView(menu, new LinearLayout.LayoutParams(dp(smallScreen ? 150 : 200), ViewGroup.LayoutParams.WRAP_CONTENT));
         ScrollView sideScroll = new ScrollView(this);
         sideScroll.setVerticalScrollBarEnabled(false);
         sideScroll.addView(side);
-        root.addView(sideScroll, new LinearLayout.LayoutParams(dp(214), ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(sideScroll, new LinearLayout.LayoutParams(dp(smallScreen ? 160 : 214), ViewGroup.LayoutParams.MATCH_PARENT));
 
         // right: the help window over the page's window
         LinearLayout right = column();
@@ -114,20 +147,36 @@ public class LauncherActivity extends Activity {
         right.addView(space(10));
         content = new FrameLayout(this);
         content.setBackground(window(WIN_TOP, WIN_BOTTOM, 10));
-        content.setPadding(dp(22), dp(16), dp(22), dp(16));
+        if (smallScreen) content.setPadding(dp(10), dp(8), dp(10), dp(8));
+        else content.setPadding(dp(22), dp(16), dp(22), dp(16));
         right.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(right, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
-        setContentView(root);
+        if (testW > 0) {   // TestControl SCREEN: that screen's size, in the top-left corner
+            FrameLayout outer = new FrameLayout(this);
+            outer.setBackgroundColor(0xFF303030);
+            outer.addView(root, new FrameLayout.LayoutParams(Math.max(testW, testH), Math.min(testW, testH)));
+            setContentView(outer);
+        } else setContentView(root);
         hideSystemBars();
 
         if (!install.hasGame()) page = "game";
         refresh();
+        if (Storage.sdMissing(this)) content.post(() -> message("SD card not found",
+                "Your game, mods and saves are on an SD card that isn't inserted. Put it back in, or move the files to internal storage under Game files."));
         (ready() ? playButton : nav.get(page)).requestFocus();
         handleTestIntent(getIntent());
         if (!Updater.busy && System.currentTimeMillis() - Updater.lastCheck > 3600_000L) checkUpdates(false);
+        DownloadQueue.get(this).setListener(this::queueChanged);
+        if (ModCatalog.age(this) > 24 * 3600_000L) refreshCatalog(false);     // quietly, once a day
         new Thread(() -> {    // achievements earned while playing go to Steam when the launcher is back
             try { SteamLink sl = new SteamLink(this); if (sl.signedIn() && sl.waiting() > 0) sl.sync(); } catch (Exception ignored) { }
         }).start();
+    }
+
+    @Override protected void onDestroy() {
+        DownloadQueue.get(this).setListener(null);
+        ticker.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleTestIntent(i); }
@@ -152,13 +201,24 @@ public class LauncherActivity extends Activity {
 
     private void show(String which) { page = which; refresh(); focusContent(); }
 
+    private String shownPage;
+
     private void refresh() {
+        // the cursor and the scroll position stay where they were when the same page is rebuilt
+        // (a mod switched on, a download finished): FF7Recomp #32/#47
+        boolean same = page.equals(shownPage);
+        String keepFocus = same ? focusKey() : null;
+        int keepY = same && content.getChildCount() > 0 && content.getChildAt(0) instanceof ScrollView ? content.getChildAt(0).getScrollY() : 0;
+        shownPage = page;
         updateStatus();
+        updateDownloadsLabel();
         playButton.setEnabled(ready() && !busy);
         content.removeAllViews();
         View v;
         switch (page) {
             case "mods": v = modsPage(); break;
+            case "catalog": v = catalogPage(); break;
+            case "downloads": v = downloadsPage(); break;
             case "mod": v = modPage(modShown); break;
             case "states": v = statesPage(); break;
             case "achievements": v = achievementsPage(); break;
@@ -171,8 +231,56 @@ public class LauncherActivity extends Activity {
         sv.addView(v);
         content.addView(sv);
         theme(content);
-        String sel = page.equals("mod") ? "mods" : page;
+        String sel = page.equals("mod") ? modBack : page;
         for (Map.Entry<String, Button> e : nav.entrySet()) e.getValue().setSelected(e.getKey().equals(sel));
+        if (same) {
+            View f = keepFocus == null ? null : restoreFocus(keepFocus);
+            final int y = keepY;
+            sv.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override public boolean onPreDraw() {
+                    sv.getViewTreeObserver().removeOnPreDrawListener(this);
+                    sv.scrollTo(0, y);
+                    if (f != null && f.getWidth() > 0) f.requestRectangleOnScreen(new android.graphics.Rect(0, 0, f.getWidth(), f.getHeight()), true);
+                    return true;
+                }
+            });
+        }
+    }
+
+    /** Where the focus is inside the page: a view's "focus:" tag, else its child-index path. */
+    private String focusKey() {
+        View f = getCurrentFocus();
+        if (f == null || !inContent(f)) return null;
+        StringBuilder path = new StringBuilder();
+        for (View v = f; v != content; ) {
+            if (v.getTag() instanceof String && ((String) v.getTag()).startsWith("focus:") && path.length() == 0) return (String) v.getTag();
+            if (!(v.getParent() instanceof ViewGroup)) return null;
+            ViewGroup g = (ViewGroup) v.getParent();
+            path.insert(0, "/" + g.indexOfChild(v));
+            v = g;
+        }
+        return path.toString();
+    }
+
+    /** Puts the focus back (a tag, else the same path, else the nearest earlier focusable). */
+    private View restoreFocus(String key) {
+        View target = null;
+        if (key.startsWith("focus:")) target = content.findViewWithTag(key);
+        else {
+            View v = content;
+            for (String part : key.substring(1).split("/")) {
+                if (!(v instanceof ViewGroup)) break;
+                ViewGroup g = (ViewGroup) v;
+                int i = Integer.parseInt(part);
+                if (i >= g.getChildCount()) { v = g.getChildAt(g.getChildCount() - 1); break; }
+                v = g.getChildAt(i);
+            }
+            target = v;
+        }
+        if (target != null && !(target.isFocusable() && target.isEnabled())) target = firstFocusable(target);
+        if (target == null) target = firstFocusable(content);
+        if (target != null) target.requestFocus();
+        return target;
     }
 
     private void updateStatus() {
@@ -234,8 +342,12 @@ public class LauncherActivity extends Activity {
 
     private void quit() {
         int pid = TestControl.gamePid(this);
-        if (pid > 0) android.os.Process.killProcess(pid);
-        finishAndRemoveTask();
+        if (pid <= 0) { finishAndRemoveTask(); return; }
+        ask("Close the game too?", "The game is still running. Anything since your last save (or the autosave) is lost.", "Close both", () -> {
+            int p2 = TestControl.gamePid(this);
+            if (p2 > 0) android.os.Process.killProcess(p2);
+            finishAndRemoveTask();
+        });
     }
 
     // ------------------------------------------------------------------ settings
@@ -314,7 +426,7 @@ public class LauncherActivity extends Activity {
         });
         col.addView(url);
         col.addView(space(8));
-        LinearLayout r = row();
+        ViewGroup r = buttons();
         r.addView(button("Arrange touch controls", v -> startActivity(new Intent(this, TouchLayoutActivity.class))));
         col.addView(r);
         return col;
@@ -339,122 +451,591 @@ public class LauncherActivity extends Activity {
         updateStatus();
     }
 
-    // ------------------------------------------------------------------ mods
+    // ------------------------------------------------------------------ mods (installed)
 
-    private String modState(ModCatalog.Mod m) {
-        if (!ModCatalog.installed(this, m)) return "";
-        String s = ModCatalog.isEnabled(this, m) ? "on" : "off";
-        return ModCatalog.updatable(this, m) ? s + ", update " + m.version : s;
-    }
+    private String catQuery = "", catCategory;
+    private boolean catInstalledOnly;
+    private String modBack = "catalog";            // where B goes from a mod's page
 
     private View modsPage() {
         LinearLayout col = column();
-        col.addView(heading("Mods"));
-        List<ModCatalog.Mod> all = ModCatalog.mods(this);
-        col.addView(note("Memoria's mod catalog. Installed mods are listed in Memoria.ini, highest priority first; that order decides which mod wins."));
-        LinearLayout actions = row();
-        actions.addView(button(all.isEmpty() ? "Get the catalog" : "Refresh the catalog", v -> refreshCatalog()));
-        if (ModDownloader.busy) actions.addView(button("Cancel the download", v -> ModDownloader.cancel()));
-        col.addView(actions);
-        if (!ModDownloader.status.isEmpty()) col.addView(note(ModDownloader.status));
-        String cat = null;
-        for (ModCatalog.Mod m : all) {
-            if (!m.category.equals(cat)) {
-                cat = m.category;
-                TextView h = text(cat.isEmpty() ? "Other" : cat, 15, ACCENT);
-                h.setPadding(0, dp(10), 0, dp(2));
-                col.addView(h);
-            }
-            String st = modState(m);
-            col.addView(listRow(withNote(m.name, (st.isEmpty() ? "" : "[" + st + "]  ") + m.version + (m.author.isEmpty() ? "" : " · " + m.author)),
-                    v -> { modShown = m; show("mod"); }));
+        LinearLayout head = row();
+        head.addView(heading("Mods"));
+        col.addView(head);
+        List<String> on = ModCatalog.enabled(this);
+        List<String> folders = ModCatalog.installedFolders(this);
+        col.addView(note("Memoria loads the mods that are on, top first: when two change the same thing, the higher one wins. "
+                + "▲▼ change the order. Get mods finds more."));
+        ViewGroup actions = buttons();
+        actions.addView(button("Get mods...", v -> show("catalog")));
+        if (!folders.isEmpty()) {
+            actions.addView(button("All on", v -> allMods(true)));
+            actions.addView(button("All off", v -> allMods(false)));
         }
-        if (ModDownloader.busy) pollMods();
+        List<ModCatalog.Mod> ups = ModCatalog.updates(this);
+        if (!ups.isEmpty()) actions.addView(button("Update all (" + ups.size() + ")", v -> queueMods(ups)));
+        col.addView(actions);
+        if (folders.isEmpty()) col.addView(text("No mods installed yet. Get mods lists Memoria's catalog.", 16, DIM));
+        // the ones that are on, in load order, then the ones that are off
+        List<String> ordered = new java.util.ArrayList<>();
+        for (String f : on) if (folders.stream().anyMatch(f::equalsIgnoreCase)) ordered.add(f);
+        for (String f : folders) if (ordered.stream().noneMatch(f::equalsIgnoreCase)) ordered.add(f);
+        for (int i = 0; i < ordered.size(); i++) col.addView(installedRow(ordered.get(i), on, i));
         return col;
     }
+
+    /** An installed mod: on/off, its place in the load order, Update, Remove, details. */
+    private View installedRow(String folder, List<String> on, int index) {
+        ModCatalog.Mod m = ModCatalog.byFolder(this, folder);
+        boolean enabled = on.stream().anyMatch(folder::equalsIgnoreCase);
+        int pos = -1;
+        for (int i = 0; i < on.size(); i++) if (on.get(i).equalsIgnoreCase(folder)) pos = i;
+        LinearLayout r = row();
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        CheckBox cb = new CheckBox(this);
+        String name = m != null ? m.name : folder;
+        String ver = m == null ? "added by hand" : ModCatalog.installedVersion(this, m).isEmpty() ? "" : "v" + ModCatalog.installedVersion(this, m);
+        if (m != null && ModCatalog.updatable(this, m)) ver += (ver.isEmpty() ? "" : ", ") + "update " + m.version;
+        cb.setText(withNote((enabled ? (pos + 1) + ".  " : "") + name, ver));
+        cb.setChecked(enabled);
+        cb.setTag("focus:on:" + folder);
+        cb.setOnCheckedChangeListener((x, isOn) -> {
+            try { ModCatalog.setEnabled(this, folder, isOn); } catch (Exception e) { message("Could not change Memoria.ini", e.getMessage()); }
+            refresh();
+        });
+        r.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (enabled) {
+            Button up = small("▲", v -> { moveMod(folder, -1); });
+            up.setTag("focus:up:" + folder);
+            up.setEnabled(pos > 0);
+            Button dn = small("▼", v -> { moveMod(folder, 1); });
+            dn.setTag("focus:down:" + folder);
+            dn.setEnabled(pos < on.size() - 1);
+            r.addView(up);
+            r.addView(dn);
+        }
+        if (m != null) {
+            if (ModCatalog.updatable(this, m) && DownloadQueue.get(this).pending(m) == null)
+                r.addView(small("Update", v -> queueMods(java.util.Collections.singletonList(m))));
+            Button info = small("Info", v -> { modShown = m; modBack = "mods"; show("mod"); });
+            info.setTag("focus:info:" + folder);
+            r.addView(info);
+        }
+        Button rm = small("Remove", v -> confirmRemove(folder, m));
+        rm.setTag("focus:rm:" + folder);
+        r.addView(rm);
+        return r;
+    }
+
+    private void moveMod(String folder, int dir) {
+        try { ModCatalog.move(this, folder, dir); } catch (Exception e) { message("Could not change Memoria.ini", e.getMessage()); return; }
+        refresh();
+    }
+
+    private void allMods(boolean on) {
+        try { ModCatalog.setAll(this, on); } catch (Exception e) { message("Could not change Memoria.ini", e.getMessage()); return; }
+        refresh();
+    }
+
+    private void confirmRemove(String folder, ModCatalog.Mod m) {
+        if (TestControl.gamePid(this) > 0) { message("Leave the game first", "The game is using the mod's files. Close it with Select+Start, then remove the mod."); return; }
+        ask("Remove " + (m != null ? m.name : folder) + "?", "Its folder (" + folder + ") is deleted from your game.", "Remove", () -> {
+            try {
+                if (m != null) ModDownloader.remove(this, m);
+                else { ModCatalog.setEnabled(this, folder, false); Storage.deleteTree(new File(install.game, folder)); }
+            } catch (Exception e) { message("Could not remove the mod", e.getMessage()); }
+            refresh();
+            focusContent();
+        });
+    }
+
+    // ------------------------------------------------------------------ Get mods (the catalog)
+
+    private LinearLayout catList;
+    private final java.util.Map<String, LinearLayout> actionSlots = new HashMap<>();
+    private final android.os.Handler ticker = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable searchNow = () -> {
+        if (!"catalog".equals(page) || catList == null) return;
+        fillCatalogList();
+        theme(catList);
+    };
+
+    private View catalogPage() {
+        LinearLayout pageCol = column();
+        List<ModCatalog.Mod> all = ModCatalog.mods(this);
+        LinearLayout head = row();
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView h = heading("Get mods");
+        h.setPadding(0, 0, dp(12), 0);
+        head.addView(h);
+        head.addView(text(all.size() + (all.size() == 1 ? " mod" : " mods"), 15, ACCENT));
+        View gap = new View(this);
+        head.addView(gap, new LinearLayout.LayoutParams(0, 1, 1));
+        List<ModCatalog.Mod> ups = ModCatalog.updates(this);
+        if (!ups.isEmpty()) head.addView(small("Update all (" + ups.size() + ")", v -> queueMods(ups)));
+        Button rf = small("⟳ Refresh", v -> refreshCatalog(true));
+        rf.setTag("focus:refresh");
+        head.addView(rf);
+        pageCol.addView(head);
+
+        android.widget.EditText q = new android.widget.EditText(this);
+        q.setHint("Search by name, author or word");
+        q.setText(catQuery);
+        q.setSingleLine(true);
+        q.setTextSize(16);
+        q.setTextColor(TEXT);
+        q.setHintTextColor(DIM);
+        q.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        q.setTag("focus:search");
+        q.setSelection(catQuery.length());
+        // the list follows what is typed: some handhelds' keyboards have no Enter key
+        q.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int n) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int n) { }
+            @Override public void afterTextChanged(android.text.Editable e) {
+                catQuery = e.toString();
+                ticker.removeCallbacks(searchNow);
+                ticker.postDelayed(searchNow, 300);
+            }
+        });
+        q.setOnEditorActionListener((v, id, ev) -> {
+            catQuery = v.getText().toString();
+            ticker.removeCallbacks(searchNow);
+            searchNow.run();
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(v.getWindowToken(), 0);
+            return true;
+        });
+        pageCol.addView(q, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout split = new LinearLayout(this);
+        split.setOrientation(LinearLayout.HORIZONTAL);
+        split.setPadding(0, dp(6), 0, 0);
+        LinearLayout cats = column();
+        int installed = 0;
+        java.util.Map<String, Integer> counts = new HashMap<>();
+        for (ModCatalog.Mod m : all) {
+            counts.merge(m.category.isEmpty() ? "Other" : m.category, 1, Integer::sum);
+            if (ModCatalog.installed(this, m)) installed++;
+        }
+        cats.addView(category("All", all.size(), catCategory == null && !catInstalledOnly, v -> { catCategory = null; catInstalledOnly = false; refresh(); }));
+        cats.addView(category("Installed", installed, catInstalledOnly, v -> { catCategory = null; catInstalledOnly = true; refresh(); }));
+        View line = new View(this);
+        line.setBackgroundColor(0x40FFFFFF);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        llp.setMargins(dp(8), dp(6), dp(8), dp(6));
+        cats.addView(line, llp);
+        for (String c : ModCatalog.categories(all))
+            cats.addView(category(c, counts.getOrDefault(c, 0), c.equals(catCategory) && !catInstalledOnly, v -> { catCategory = c; catInstalledOnly = false; refresh(); }));
+        split.addView(cats, new LinearLayout.LayoutParams(dp(smallScreen ? 104 : 140), ViewGroup.LayoutParams.WRAP_CONTENT));
+        View vline = new View(this);
+        vline.setBackgroundColor(0x40FFFFFF);
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(Math.max(1, dp(1)), ViewGroup.LayoutParams.MATCH_PARENT);
+        vlp.setMargins(dp(smallScreen ? 4 : 8), 0, dp(smallScreen ? 6 : 12), 0);
+        split.addView(vline, vlp);
+        catList = column();
+        fillCatalogList();
+        split.addView(catList, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        pageCol.addView(split);
+        return pageCol;
+    }
+
+    private void fillCatalogList() {
+        LinearLayout list = catList;
+        list.removeAllViews();
+        actionSlots.clear();
+        List<ModCatalog.Mod> all = ModCatalog.mods(this);
+        if (all.isEmpty()) {
+            list.addView(text("No catalog yet. Check the internet connection and press Refresh.", 16, DIM));
+            return;
+        }
+        List<ModCatalog.Mod> found = ModCatalog.search(this, all, catQuery, catCategory, catInstalledOnly);
+        if (found.isEmpty()) list.addView(text("Nothing matches.", 16, DIM));
+        for (int i = 0; i < found.size(); i++) {
+            if (i > 0) {
+                View d = new View(this);
+                d.setBackgroundColor(0x30FFFFFF);
+                list.addView(d, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
+            }
+            list.addView(catalogRow(found.get(i), catCategory == null));
+        }
+    }
+
+    /** A category in Get mods: its name and count; the one shown is lit. */
+    private Button category(String label, int count, boolean on, View.OnClickListener l) {
+        Button b = new Button(this);
+        android.text.SpannableString t = new android.text.SpannableString(label + "  " + count);
+        t.setSpan(new ForegroundColorSpan(on ? TEXT : DIM), label.length(), t.length(), 0);
+        t.setSpan(new RelativeSizeSpan(0.8f), label.length(), t.length(), 0);
+        b.setText(t);
+        b.setAllCaps(false);
+        b.setTextSize(14);
+        b.setTextColor(on ? ACCENT : TEXT);
+        shadow(b);
+        b.setSingleLine(true);
+        b.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        b.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        b.setPadding(dp(8), 0, dp(4), 0);
+        b.setMinHeight(0);
+        b.setMinimumHeight(0);
+        b.setStateListAnimator(null);
+        StateListDrawable sl = new StateListDrawable();
+        sl.addState(new int[] { android.R.attr.state_focused }, window(HOT_TOP, HOT_BOTTOM, 6));
+        sl.addState(new int[] { android.R.attr.state_pressed }, window(HOT_TOP, HOT_BOTTOM, 6));
+        if (on) sl.addState(new int[] {}, window(BTN_TOP, BTN_BOTTOM, 6));
+        b.setBackground(sl);
+        b.setOnClickListener(l);
+        b.setTag("focus:cat:" + label);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34));
+        lp.setMargins(0, dp(1), 0, dp(1));
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private View catalogRow(ModCatalog.Mod m, boolean showCategory) {
+        LinearLayout info = column();
+        info.setPadding(dp(8), dp(6), dp(8), dp(6));
+        TextView name = text(m.name, 16, TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        info.addView(name);
+        StringBuilder b = new StringBuilder();
+        if (!m.author.isEmpty()) b.append(m.author);
+        if (showCategory && !m.category.isEmpty()) b.append(b.length() > 0 ? "  ·  " : "").append(m.category);
+        if (!m.version.isEmpty()) b.append(b.length() > 0 ? "  ·  " : "").append("v").append(m.version);
+        if (!m.sizeText().isEmpty()) b.append(b.length() > 0 ? "  ·  " : "").append(m.sizeText());
+        TextView meta = text(b.toString(), 13, DIM);
+        meta.setSingleLine(true);
+        meta.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        info.addView(meta);
+        info.setFocusable(true);
+        info.setClickable(true);
+        info.setTag("focus:mod:" + m.folder);
+        info.setOnClickListener(v -> { modShown = m; modBack = "catalog"; show("mod"); });
+        GradientDrawable lit = new GradientDrawable();
+        lit.setColor(0x33FFFFFF);
+        lit.setCornerRadius(dp(6));
+        StateListDrawable sl = new StateListDrawable();
+        sl.addState(new int[] { android.R.attr.state_focused }, lit);
+        sl.addState(new int[] { android.R.attr.state_pressed }, lit);
+        info.setBackground(sl);
+        LinearLayout slot = new LinearLayout(this);
+        slot.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        fillAction(slot, m);
+        actionSlots.put(m.folder, slot);
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(0, dp(4), 0, dp(4));
+        r.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        r.addView(slot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return r;
+    }
+
+    /** A Get mods row's action: Install / Update / Installed, or its place in the queue. */
+    private void fillAction(LinearLayout slot, ModCatalog.Mod m) {
+        DownloadQueue.Item q = DownloadQueue.get(this).pending(m);
+        boolean inst = ModCatalog.installed(this, m), up = ModCatalog.updatable(this, m);
+        String label = q != null ? queueLabel(q, false) : !inst ? "\u0001install" : up ? "\u0001update" : "\u0001installed";
+        if (label.equals(slot.getTag())) return;                     // unchanged: keep the focus
+        boolean hadFocus = slot.hasFocus();
+        slot.setTag(label);
+        slot.removeAllViews();
+        Button b;
+        if (q != null) b = small(label, v -> show("downloads"));
+        else if (!inst) b = small("Install", v -> queueMods(java.util.Collections.singletonList(m)));
+        else if (up) b = small("Update", v -> queueMods(java.util.Collections.singletonList(m)));
+        else { slot.addView(text("✓ Installed", 14, ACCENT)); return; }
+        b.setTag("focus:act:" + m.folder);
+        slot.addView(b);
+        if (hadFocus) b.requestFocus();
+    }
+
+    /** "Queued", "Downloading 40%", "Unpacking"; long: with sizes. */
+    private String queueLabel(DownloadQueue.Item q, boolean longForm) {
+        switch (q.state) {
+            case QUEUED: return "Queued";
+            case RUNNING:
+                int pc = q.percent();
+                if (!"Downloading".equals(q.phase)) return q.phase + (pc >= 0 && longForm ? " " + pc + "%" : "...");
+                if (!longForm) return pc >= 0 ? "Downloading " + pc + "%" : "Downloading...";
+                return "Downloading " + Storage.human(q.got) + (q.total > 0 ? " of " + Storage.human(q.total) : "") + (pc >= 0 ? "  (" + pc + "%)" : "");
+            case DONE: return q.update ? "Updated to " + q.mod.version : "Installed and turned on";
+            case CANCELLED: return "Cancelled";
+            default: return "Failed: " + q.error;
+        }
+    }
+
+    /** Queues mods for download; the game must not be running while one is replaced. */
+    private void queueMods(List<ModCatalog.Mod> mods) {
+        int n = 0;
+        StringBuilder clash = new StringBuilder();
+        for (ModCatalog.Mod m : mods) {
+            if (DownloadQueue.get(this).add(m, ModCatalog.installed(this, m))) n++;
+            for (String other : m.incompatible) {
+                ModCatalog.Mod o = ModCatalog.byFolder(this, other);
+                String on = o != null ? o.folder : other;
+                if (ModCatalog.enabled(this).stream().anyMatch(on::equalsIgnoreCase))
+                    clash.append("\n· ").append(m.name).append(" does not work with ").append(o != null ? o.name : other).append(", which is on.");
+            }
+        }
+        updateStatus();
+        refresh();
+        if (clash.length() > 0) message("Check these mods", "Memoria's catalog says:" + clash + "\n\nTurn one of them off under Mods once the download is done.");
+        else if (n > 0) status.setText(n == 1 ? "Downloading " + mods.get(0).name + " (Downloads shows the progress)." : n + " mods queued (Downloads shows the progress).");
+    }
+
+    // ------------------------------------------------------------------ a mod's page
 
     private View modPage(ModCatalog.Mod m) {
         LinearLayout col = column();
         if (m == null) return col;
         col.addView(heading(m.name));
-        col.addView(note(m.category + " · version " + m.version + (m.author.isEmpty() ? "" : " · by " + m.author) + " · folder " + m.folder));
-        LinearLayout actions = row();
+        StringBuilder meta = new StringBuilder();
+        if (!m.author.isEmpty()) meta.append("by ").append(m.author);
+        if (!m.category.isEmpty()) meta.append(meta.length() > 0 ? "  ·  " : "").append(m.category);
+        if (!m.version.isEmpty()) meta.append(meta.length() > 0 ? "  ·  " : "").append("version ").append(m.version);
+        if (!m.releaseDate.isEmpty()) meta.append("  ·  released ").append(m.releaseDate);
+        if (!m.sizeText().isEmpty()) meta.append("  ·  ").append(m.sizeText());
+        col.addView(text(meta.toString(), 14, ACCENT));
         boolean inst = ModCatalog.installed(this, m), on = inst && ModCatalog.isEnabled(this, m);
-        if (!inst) actions.addView(button("Install", v -> installMod(m)));
+        String iv = ModCatalog.installedVersion(this, m);
+        col.addView(note(inst ? "Installed" + (iv.isEmpty() ? "" : ": version " + iv) + (on ? ", on" : ", off") + "  ·  folder " + m.folder
+                : "Not installed  ·  goes into the folder " + m.folder));
+        for (String other : m.incompatible) {
+            ModCatalog.Mod o = ModCatalog.byFolder(this, other);
+            col.addView(text("Does not work with " + (o != null ? o.name : other) + ".", 14, 0xFFFF9A80));
+        }
+        if (!m.minMemoria.isEmpty() && m.minMemoria.replaceAll("\\D", "").compareTo(MemoriaInstall.VERSION.replaceAll("\\D", "")) > 0) col.addView(note("Needs Memoria " + m.minMemoria + " or later (the app installs " + MemoriaInstall.VERSION + ")."));
+        ViewGroup actions = buttons();
+        DownloadQueue.Item q = DownloadQueue.get(this).pending(m);
+        if (q != null) actions.addView(button(queueLabel(q, false), v -> show("downloads")));
+        else if (!inst) actions.addView(button("Install", v -> queueMods(java.util.Collections.singletonList(m))));
         else {
             actions.addView(button(on ? "Turn off" : "Turn on", v -> {
-                try { ModCatalog.setEnabled(this, m, !on); } catch (Exception e) { status.setText(e.getMessage()); return; }
-                refresh(); focusContent();
+                try { ModCatalog.setEnabled(this, m, !on); } catch (Exception e) { message("Could not change Memoria.ini", e.getMessage()); return; }
+                refresh();
             }));
-            if (ModCatalog.updatable(this, m)) actions.addView(button("Update to " + m.version, v -> installMod(m)));
-            actions.addView(button("Remove", v -> styled(new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                    .setTitle("Remove " + m.name + "?").setMessage("Its folder is deleted from your game.")
-                    .setPositiveButton("Remove", (d, w) -> {
-                        try { ModDownloader.remove(this, m); } catch (Exception e) { status.setText(e.getMessage()); }
-                        refresh(); focusContent();
-                    }).setNegativeButton("Keep", null).show())));
+            if (ModCatalog.updatable(this, m)) actions.addView(button("Update to " + m.version, v -> queueMods(java.util.Collections.singletonList(m))));
+            actions.addView(button("Remove", v -> confirmRemove(m.folder, m)));
         }
-        actions.addView(button("Back", v -> show("mods")));
+        if (!m.website.isEmpty()) actions.addView(button("Mod's web page", v -> {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(m.website))); }
+            catch (Exception e) { message("No browser", "Nothing on this device can open " + m.website); }
+        }));
+        actions.addView(button("Back", v -> show(modBack)));
         col.addView(actions);
-        if (!ModDownloader.status.isEmpty()) col.addView(note(ModDownloader.status));
-        TextView d = text(m.description, 14, DIM);
-        d.setPadding(0, dp(10), 0, 0);
+        if (!m.preview.isEmpty()) {
+            android.widget.ImageView img = new android.widget.ImageView(this);
+            img.setAdjustViewBounds(true);
+            img.setScaleType(android.widget.ImageView.ScaleType.FIT_START);
+            img.setMaxHeight(dp(220));
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            ip.setMargins(0, dp(8), 0, dp(4));
+            col.addView(img, ip);
+            loadPreview(m, img);
+        }
+        TextView d = text(m.description.replaceAll("[ \\t]*\\n[ \\t]*", "\n"), 14, TEXT);
+        d.setPadding(0, dp(8), 0, 0);
         col.addView(d);
-        if (ModDownloader.busy) pollMods();
+        if (!m.patchNotes.isEmpty()) {
+            TextView ph = text("Release notes", 15, ACCENT);
+            ph.setPadding(0, dp(10), 0, 0);
+            col.addView(ph);
+            col.addView(text(m.patchNotes.replaceAll("[ \\t]*\\n[ \\t]*", "\n"), 14, DIM));
+        }
         return col;
     }
 
-    private void refreshCatalog() {
-        busy = true;
-        status.setText("Getting Memoria's catalog...");
+    /** The mod's preview picture, downloaded once into files/mods/previews. */
+    private void loadPreview(ModCatalog.Mod m, android.widget.ImageView into) {
+        File f = new File(new File(ModCatalog.dir(this), "previews"), m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + ".img");
+        new Thread(() -> {
+            try {
+                if (!f.isFile() || f.length() == 0) {
+                    f.getParentFile().mkdirs();
+                    java.net.HttpURLConnection h = (java.net.HttpURLConnection) new java.net.URL(m.preview).openConnection();
+                    h.setRequestProperty("User-Agent", "FF9Recomp");
+                    h.setInstanceFollowRedirects(true);
+                    h.setConnectTimeout(15000);
+                    h.setReadTimeout(30000);
+                    if (h.getResponseCode() != 200) return;
+                    File tmp = new File(f.getPath() + ".tmp");
+                    try (java.io.InputStream in = h.getInputStream(); java.io.OutputStream o = new java.io.FileOutputStream(tmp)) {
+                        byte[] b = new byte[1 << 16];
+                        for (int n; (n = in.read(b)) > 0; ) o.write(b, 0, n);
+                    }
+                    if (!tmp.renameTo(f)) return;
+                }
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                o.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+                o.inSampleSize = 1;
+                while (o.outWidth / (o.inSampleSize * 2) >= 900) o.inSampleSize *= 2;
+                o.inJustDecodeBounds = false;
+                android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+                if (bm != null) runOnUiThread(() -> into.setImageBitmap(bm));
+            } catch (Exception ignored) { }
+        }, "mod-preview").start();
+    }
+
+    // ------------------------------------------------------------------ Downloads (the queue)
+
+    private final java.util.Map<DownloadQueue.Item, Object[]> progressViews = new HashMap<>();
+    private String queueSig = "";
+
+    private View downloadsPage() {
+        LinearLayout col = column();
+        col.addView(heading("Downloads"));
+        col.addView(note("Mods download one at a time, top first, while the launcher stays usable. A mod being replaced waits for the game to close. "
+                + "If the launcher is closed, the queue carries on (and the download resumes) when it opens again."));
+        ViewGroup bar = buttons();
+        bar.addView(button("Get mods...", v -> show("catalog")));
+        bar.addView(button("Clear finished", v -> { DownloadQueue.get(this).clearFinished(); refresh(); }));
+        col.addView(bar);
+        progressViews.clear();
+        List<DownloadQueue.Item> items = DownloadQueue.get(this).snapshot();
+        if (items.isEmpty()) col.addView(text("Nothing downloading. Pick mods under Get mods.", 16, DIM));
+        for (DownloadQueue.Item q : items) col.addView(downloadRow(q));
+        return col;
+    }
+
+    private View downloadRow(DownloadQueue.Item q) {
+        LinearLayout whole = column();
+        whole.setPadding(0, dp(8), 0, dp(8));
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout info = column();
+        TextView name = text(q.mod.name + (q.update ? "  (update to " + q.mod.version + ")" : ""), 17, TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        info.addView(name);
+        boolean bad = q.state == DownloadQueue.State.FAILED;
+        TextView line = text(queueLabel(q, true) + (q.state == DownloadQueue.State.QUEUED && !q.mod.sizeText().isEmpty() ? "  ·  " + q.mod.sizeText() : ""),
+                14, bad ? 0xFFFF9A80 : q.state == DownloadQueue.State.DONE ? ACCENT : DIM);
+        info.addView(line);
+        top.addView(info, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        DownloadQueue dq = DownloadQueue.get(this);
+        switch (q.state) {
+            case QUEUED:
+                top.addView(small("▲", v -> dq.move(q, -1)));
+                top.addView(small("▼", v -> dq.move(q, 1)));
+                top.addView(small("Cancel", v -> dq.cancel(q)));
+                break;
+            case RUNNING:
+                top.addView(small("Cancel", v -> dq.cancel(q)));
+                break;
+            case FAILED: case CANCELLED:
+                top.addView(small("Retry", v -> dq.retry(q)));
+                break;
+            default:
+                break;
+        }
+        whole.addView(top);
+        android.widget.ProgressBar pb = null;
+        if (q.state == DownloadQueue.State.RUNNING) {
+            pb = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            pb.setMax(100);
+            pb.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+            int pc = q.percent();
+            pb.setIndeterminate(pc < 0);
+            if (pc >= 0) pb.setProgress(pc);
+            whole.addView(pb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)));
+        }
+        progressViews.put(q, new Object[] { line, pb });
+        return whole;
+    }
+
+    private String queueSignature() {
+        StringBuilder b = new StringBuilder();
+        for (DownloadQueue.Item q : DownloadQueue.get(this).snapshot()) b.append(q.mod.folder).append(':').append(q.state).append(';');
+        return b.toString();
+    }
+
+    /** The queue moved: the status line always; the page in place when only progress changed. */
+    private void queueChanged() {
+        String sig = queueSignature();
+        boolean structural = !sig.equals(queueSig);
+        queueSig = sig;
+        updateStatus();
+        updateDownloadsLabel();
+        switch (page) {
+            case "downloads":
+                if (structural) { refresh(); return; }
+                for (java.util.Map.Entry<DownloadQueue.Item, Object[]> e : progressViews.entrySet()) {
+                    DownloadQueue.Item q = e.getKey();
+                    ((TextView) e.getValue()[0]).setText(queueLabel(q, true));
+                    android.widget.ProgressBar pb = (android.widget.ProgressBar) e.getValue()[1];
+                    if (pb != null && q.percent() >= 0) { pb.setIndeterminate(false); pb.setProgress(q.percent()); }
+                }
+                break;
+            case "catalog":
+                List<ModCatalog.Mod> all = ModCatalog.mods(this);
+                for (ModCatalog.Mod m : all) { LinearLayout slot = actionSlots.get(m.folder); if (slot != null) { fillAction(slot, m); theme(slot); } }
+                break;
+            case "mods": case "mod":
+                if (structural) refresh();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void updateDownloadsLabel() {
+        Button b = nav.get("downloads");
+        if (b == null) return;
+        int n = DownloadQueue.get(this).pendingCount();
+        b.setText(n > 0 ? "Downloads (" + n + ")" : "Downloads");
+    }
+
+    /** The catalog from Memoria's GitHub: on demand (loud), or quietly when it is a day old. */
+    private void refreshCatalog(boolean loud) {
+        if (loud) status.setText("Getting Memoria's catalog...");
         new Thread(() -> {
             String m = null;
             try { ModCatalog.refresh(this); } catch (Exception e) { m = "Could not get the catalog: " + e.getMessage(); }
             String mm = m;
-            runOnUiThread(() -> { busy = false; refresh(); focusContent(); if (mm != null) status.setText(mm); });
-        }).start();
+            runOnUiThread(() -> {
+                if (page.equals("catalog") || page.equals("mods")) refresh();
+                updateStatus();
+                if (mm != null && loud) message("Mod catalog", mm);
+                else if (loud) status.setText("The catalog is up to date: " + ModCatalog.mods(this).size() + " mods.");
+            });
+        }, "catalog").start();
     }
-
-    private void installMod(ModCatalog.Mod m) {
-        if (ModDownloader.busy) { status.setText("One install at a time: " + ModDownloader.status); return; }
-        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first (Select+Start)."); return; }
-        ModDownloader.busy = true;
-        ModDownloader.status = "Starting " + m.name;
-        new Thread(() -> {
-            try { ModDownloader.install(this, m); }
-            catch (Exception e) {
-                ModDownloader.status = m.name + ": " + e.getMessage() + ("cancelled".equals(e.getMessage()) ? "" : " (Install again to continue the download.)");
-            }
-        }, "mod-install").start();
-        refresh();
-        focusContent();
-    }
-
-    private final Runnable modTick = new Runnable() {
-        @Override public void run() {
-            if (!page.equals("mods") && !page.equals("mod")) return;
-            status.setText(ModDownloader.status);
-            if (ModDownloader.busy) content.postDelayed(this, 500);
-            else { String st = ModDownloader.status; refresh(); focusContent(); status.setText(st); }
-        }
-    };
-
-    private void pollMods() { content.removeCallbacks(modTick); content.postDelayed(modTick, 500); }
 
     // ------------------------------------------------------------------ save states
 
     private View statesPage() {
         LinearLayout col = column();
         col.addView(heading("Save states"));
-        col.addView(note("In game, Select+R1 keeps the place the party is in. A resumes a slot (at the start of that place); Y deletes it."));
+        col.addView(note("In game, Select+R1 keeps the place the party is in. \"Play from here\" starts the game there (at the start of that place); Y or Delete removes a slot."));
         for (int i = 1; i <= SaveStates.SLOTS; i++) {
             int slot = i;
             String d = SaveStates.describe(this, slot);
+            LinearLayout r = new LinearLayout(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
             Button b = listRow(withNote("Slot " + slot, d == null ? "empty" : d), v -> resume(slot));
             b.setTag(slot);
-            col.addView(b);
+            r.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            if (d != null) {
+                Button play = small("Play from here", v -> resume(slot));
+                play.setTag("focus:play:" + slot);
+                r.addView(play);
+                Button del = small("Delete", v -> deleteState(slot));
+                del.setTag("focus:del:" + slot);
+                r.addView(del);
+            }
+            col.addView(r);
         }
         return col;
+    }
+
+    private void deleteState(int slot) {
+        if (!SaveStates.used(this, slot)) return;
+        ask("Delete slot " + slot + "?", SaveStates.describe(this, slot) + "\n\nThis can't be undone.", "Delete", () -> {
+            SaveStates.delete(this, slot);
+            refresh();
+        });
     }
 
     private void resume(int slot) {
@@ -480,15 +1061,40 @@ public class LauncherActivity extends Activity {
         col.addView(note(st.signedIn()
                 ? "Signed in to Steam as " + st.account() + ". " + (st.waiting() > 0 ? st.waiting() + " waiting to be sent." : "All sent.")
                 : "Sign in to send them to your Steam account: scan a QR code with the Steam app. You never type your Steam password here."));
-        LinearLayout actions = row();
+        ViewGroup actions = buttons();
         if (!st.signedIn()) actions.addView(button("Sign in to Steam", v -> steamSignIn()));
         else {
             actions.addView(button("Send to Steam now", v -> steamSync()));
-            actions.addView(button("Sign out", v -> { st.signOut(); refresh(); focusContent(); }));
+            actions.addView(button("Sign out", v -> ask("Sign out of Steam?", "Achievements earned while signed out wait here and go to Steam when you sign in again.", "Sign out",
+                    () -> { st.signOut(); refresh(); focusContent(); })));
         }
         col.addView(actions);
-        for (String id : got) col.addView(text("★  " + Achievements.pretty(id), 15, TEXT));
+        // the whole list from Steam's schema (signed in), else the ones earned here
+        List<String[]> all = steamAchievements(st);
+        if (!all.isEmpty()) {
+            int have = 0;
+            for (String[] a : all) if (a[1].equals("1") || got.contains(a[0])) have++;
+            col.addView(text(have + " of " + all.size() + " on your Steam account", 15, ACCENT));
+            for (String[] a : all) {
+                boolean on = a[1].equals("1") || got.contains(a[0]);
+                col.addView(text((on ? "★  " : "☆  ") + a[2], 15, on ? TEXT : DIM));
+            }
+        } else for (String id : got) col.addView(text("★  " + Achievements.pretty(id), 15, TEXT));
+        if (all.isEmpty() && got.isEmpty()) col.addView(text("None yet: they unlock as you play.", 15, DIM));
         return col;
+    }
+
+    /** {api name, "0"/"1", display name} from Steam's state (files/steam/state.txt), when signed in. */
+    private List<String[]> steamAchievements(SteamLink st) {
+        List<String[]> out = new java.util.ArrayList<>();
+        if (!st.signedIn() || !st.state.isFile()) return out;
+        try {
+            for (String l : java.nio.file.Files.readAllLines(st.state.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+                String[] f = l.split(" ", 4);
+                if (f.length >= 4 && f[0].equals("ach")) out.add(new String[] { f[1], f[2], f[3] });
+            }
+        } catch (Exception ignored) { }
+        return out;
     }
 
     private void steamSync() {
@@ -566,7 +1172,7 @@ public class LauncherActivity extends Activity {
         col.addView(text(!has ? "No game imported yet." : missing != null ? missing
                 : "Your FINAL FANTASY IX is imported" + (install.hasMoguri() ? ", with Moguri Mod." : "."), 15, has && missing == null ? ACCENT : TEXT));
         col.addView(note("Pick your FINAL FANTASY IX folder (the Steam copy, with Memoria installed; Moguri Mod if you use it). It is copied into the app once; nothing from the game ships in the app."));
-        LinearLayout actions = row();
+        ViewGroup actions = buttons();
         actions.addView(button(has ? "Import again" : "Import game folder", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME)));
         col.addView(actions);
 
@@ -576,7 +1182,7 @@ public class LauncherActivity extends Activity {
         col.addView(note("No PC needed: sign in to Steam with a QR code and the app downloads FINAL FANTASY IX (about 8 GB, every file checked against Steam's), "
                 + "then installs Memoria " + MemoriaInstall.VERSION + " from its GitHub page. A stopped download goes on where it was; "
                 + (has ? "Repair downloads only the files that are missing or damaged, and keeps your mods, saves and Memoria settings." : "Moguri Mod can be added from Mods afterwards.")));
-        LinearLayout dl = row();
+        ViewGroup dl = buttons();
         if (SteamFiles.busy) dl.addView(button("Stop the download", v -> SteamFiles.cancel.set(true)));
         else dl.addView(button(has ? "Repair from Steam" : "Download from Steam", v -> steamDownload()));
         col.addView(dl);
@@ -586,7 +1192,7 @@ public class LauncherActivity extends Activity {
         hs.setPadding(0, dp(14), 0, dp(4));
         col.addView(hs);
         col.addView(note("Bring your PC saves: pick SavedData_ww.dat from the PC (in AppData/LocalLow/SquareEnix/FINAL FANTASY IX/Steam/EncryptedSavedData). The saves here are kept as a backup first."));
-        LinearLayout sv = row();
+        ViewGroup sv = buttons();
         sv.addView(button("Import a PC save", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PICK_SAVE)));
         col.addView(sv);
 
@@ -595,7 +1201,7 @@ public class LauncherActivity extends Activity {
         col.addView(h);
         col.addView(note("The game, mods and saves are " + (Storage.onSd(this) ? "on the SD card" + (Storage.sdMissing(this) ? " (not inserted)" : "") : "in internal storage")
                 + ", " + Storage.human(install.files.getUsableSpace()) + " free there. Moving copies everything, then removes the old copy."));
-        LinearLayout st = row();
+        ViewGroup st = buttons();
         st.addView(button(Storage.onSd(this) ? "Move to internal storage" : "Move to the SD card", v -> moveStorage()));
         col.addView(st);
 
@@ -604,7 +1210,7 @@ public class LauncherActivity extends Activity {
         col.addView(h);
         Updater.Release up = Updater.available;
         col.addView(note("FF9Recomp " + Reports.version(this) + (up != null ? ". Version " + up.version + " is out: your imported game, mods and saves are kept." : ".")));
-        LinearLayout ap = row();
+        ViewGroup ap = buttons();
         ap.addView(button(up != null ? "Update to " + up.version : "Check for updates", v -> updateOrCheck()));
         col.addView(ap);
         return col;
@@ -643,7 +1249,7 @@ public class LauncherActivity extends Activity {
                 msg = "Moving failed, nothing changed: " + e.getMessage();
             }
             String m = msg;
-            runOnUiThread(() -> { busy = false; install = new GameInstall(this); refresh(); focusContent(); status.setText(m); });
+            runOnUiThread(() -> { busy = false; install = new GameInstall(this); refresh(); focusContent(); status.setText(m); message("Storage", m); });
         }).start();
     }
 
@@ -663,8 +1269,29 @@ public class LauncherActivity extends Activity {
                 if (busy) return;
                 if (loud) { refresh(); focusContent(); status.setText(m); }
                 else if (Updater.available != null) updateStatus();
+                if (Updater.available != null) offerUpdate(loud);
             });
         }).start();
+    }
+
+    private String updateShown = "";
+
+    /** A newer release: offered once per version (Later, or Skip this version for good). */
+    private void offerUpdate(boolean asked) {
+        Updater.Release r = Updater.available;
+        if (r == null || isFinishing()) return;
+        android.content.SharedPreferences pr = Settings.prefs(this);
+        if (!asked && (r.version.equals(pr.getString("update_skipped", "")) || r.version.equals(updateShown))) return;
+        updateShown = r.version;
+        String notes = r.notes == null ? "" : r.notes.replaceAll("(?m)^#+\\s*", "").replaceAll("\\*\\*", "").trim();
+        if (notes.length() > 900) notes = notes.substring(0, 900) + "...";
+        styled(new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Update available: " + r.version)
+                .setMessage("You have " + Updater.installedVersion(this) + ". Your game files, mods and saves stay.\n\n" + notes)
+                .setPositiveButton("Update now", (d, w) -> { show("game"); updateOrCheck(); })
+                .setNegativeButton("Later", null)
+                .setNeutralButton("Skip this version", (d, w) -> pr.edit().putString("update_skipped", r.version).apply())
+                .show());
     }
 
     private void updateOrCheck() {
@@ -715,7 +1342,7 @@ public class LauncherActivity extends Activity {
         stb.setOnCheckedChangeListener((x, on) -> reportState = on);
         col.addView(stb);
         col.addView(note("A zip attached on GitHub is public: untick the saves, or share the zip privately, if you'd rather."));
-        LinearLayout actions = row();
+        ViewGroup actions = buttons();
         Button save = button(reportBusy ? "Packing..." : "Save to Downloads", v -> makeReport(false));
         Button share = button("Share...", v -> makeReport(true));
         save.setEnabled(!reportBusy);
@@ -727,7 +1354,7 @@ public class LauncherActivity extends Activity {
         Uri issue = Reports.issueUrl(this);
         if (issue != null) {
             col.addView(note("Then open an issue on GitHub (the device lines are filled in) and drag the zip from Downloads into the comment box."));
-            LinearLayout ir = row();
+            ViewGroup ir = buttons();
             ir.addView(button("Open a GitHub issue", v -> {
                 try { startActivity(new Intent(Intent.ACTION_VIEW, issue)); }
                 catch (Exception e) { status.setText("No browser to open " + Reports.ISSUES); }
@@ -802,7 +1429,8 @@ public class LauncherActivity extends Activity {
             runOnUiThread(() -> {
                 busy = false;
                 refresh();
-                if (e2 != null) status.setText("Import failed: " + e2);
+                if (e2 != null) message("Could not import the game", e2);
+                else message("Game imported", "Your FINAL FANTASY IX is ready" + (install.hasMoguri() ? ", with Moguri Mod." : ".") + " Press Play (or Start).");
             });
         }).start();
     }
@@ -850,13 +1478,17 @@ public class LauncherActivity extends Activity {
         }
         if (code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (!down || e.getRepeatCount() > 0) return true;
-            if (page.equals("mod") && inContent(f)) { show("mods"); return true; }
-            if (inContent(f)) { Button n = nav.get(page.equals("mod") ? "mods" : page); if (n != null) n.requestFocus(); return true; }
+            if (page.equals("mod") && inContent(f)) { show(modBack); return true; }
+            if (inContent(f)) { Button n = nav.get(page.equals("mod") ? modBack : page); if (n != null) n.requestFocus(); return true; }
             if (code == KeyEvent.KEYCODE_BACK) moveTaskToBack(true);
             return true;
         }
         if (code == KeyEvent.KEYCODE_BUTTON_Y && page.equals("states") && f != null && f.getTag() instanceof Integer) {
-            if (down) { int slot = (Integer) f.getTag(); SaveStates.delete(this, slot); refresh(); focusTagged(slot); }
+            if (down && e.getRepeatCount() == 0) deleteState((Integer) f.getTag());
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_BUTTON_START) {      // Start plays, from anywhere in the launcher
+            if (!down && ready() && !busy) play();
             return true;
         }
         return super.dispatchKeyEvent(e);
@@ -892,6 +1524,13 @@ public class LauncherActivity extends Activity {
         return l;
     }
 
+    /** A row of buttons that wraps onto the next line when the width runs out (small screens). */
+    private ViewGroup buttons() {
+        FlowRow f = new FlowRow(this);
+        f.setPadding(0, dp(6), 0, dp(6));
+        return f;
+    }
+
     private View space(int dpH) { View v = new View(this); v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(dpH))); return v; }
 
     private TextView text(String s, int sp, int color) {
@@ -910,7 +1549,7 @@ public class LauncherActivity extends Activity {
     }
 
     private TextView heading(String s) {
-        TextView t = text(s, 21, TEXT);
+        TextView t = text(s, smallScreen ? 18 : 21, TEXT);
         t.setTypeface(Typeface.create("serif", Typeface.BOLD));
         t.setPadding(0, 0, 0, dp(4));
         return t;
@@ -975,9 +1614,12 @@ public class LauncherActivity extends Activity {
         b.setOnClickListener(v -> { if (which == null) play(); else show(which); });
         // moving the cursor over a command shows its page; A goes into it
         if (which != null) b.setOnFocusChangeListener((v, has) -> {
-            if (has && !page.equals(which) && !(page.equals("mod") && which.equals("mods"))) { page = which; refresh(); }
+            if (has && !page.equals(which) && !(page.equals("mod") && which.equals(modBack))) { page = which; refresh(); }
         });
-        b.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(which == null ? 42 : 34)));
+        if (smallScreen) b.setTextSize(which == null ? 16 : 13);
+        b.setSingleLine(true);
+        b.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        b.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(which == null ? (smallScreen ? 32 : 38) : (smallScreen ? 26 : 30))));
         if (which != null) nav.put(which, b);
         return b;
     }
@@ -986,7 +1628,7 @@ public class LauncherActivity extends Activity {
         Button b = new Button(this);
         b.setText(label);
         b.setAllCaps(false);
-        b.setTextSize(16);
+        b.setTextSize(smallScreen ? 14 : 16);
         b.setTextColor(new android.content.res.ColorStateList(new int[][] { { -android.R.attr.state_enabled }, {} }, new int[] { 0xFF8088A0, Color.WHITE }));
         shadow(b);
         b.setStateListAnimator(null);
@@ -1003,6 +1645,34 @@ public class LauncherActivity extends Activity {
         lp.setMarginEnd(dp(10));
         b.setLayoutParams(lp);
         return b;
+    }
+
+    /** A compact button for rows (▲▼, Install, Remove). */
+    private Button small(String label, View.OnClickListener l) {
+        Button b = button(label, l);
+        b.setTextSize(14);
+        b.setPadding(dp(10), 0, dp(10), 0);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setMinHeight(dp(34));
+        b.setMinimumHeight(dp(34));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+        lp.setMarginStart(dp(6));
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    /** A result or a problem, in a window the player has to close (the status line is easy to miss). */
+    private void message(String title, String text) {
+        Sfx.play(this, title.startsWith("Could not") || title.startsWith("No ") ? Sfx.BUZZER : Sfx.CURSOR);
+        styled(new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(title).setMessage(text == null ? "" : text).setPositiveButton("OK", null).show());
+    }
+
+    /** A yes/no question; yes runs then. */
+    private void ask(String title, String text, String yes, Runnable then) {
+        styled(new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle(title).setMessage(text).setPositiveButton(yes, (d, w) -> then.run()).setNegativeButton("Cancel", null).show());
     }
 
     /** A line in a list (mods, save states, a scale setting): full width, lit under the cursor. */
@@ -1042,11 +1712,30 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    /** A dialog in a window like the rest of the launcher, with its sounds (FF7Recomp's ff()). */
     private AlertDialog styled(AlertDialog d) {
-        if (d.getWindow() != null) d.getWindow().setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(window(WIN_TOP, WIN_BOTTOM, 10), dp(16)));
-        for (int which : new int[] { AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE }) {
+        if (d.getWindow() != null) {
+            d.getWindow().setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(window(WIN_TOP, WIN_BOTTOM, 10), dp(16)));
+            View decor = d.getWindow().getDecorView();
+            theme(decor);
+            TextView msg = decor.findViewById(android.R.id.message);
+            if (msg != null) { msg.setTextColor(TEXT); shadow(msg); }
+            if (testW > 0) {   // TestControl SCREEN: the dialog within that screen too
+                d.getWindow().setGravity(Gravity.TOP | Gravity.START);
+                d.getWindow().setLayout(Math.max(testW, testH), Math.min(testW, testH));
+            }
+        }
+        d.setOnKeyListener((di, code, e) -> {
+            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_BUTTON_B) Sfx.play(this, Sfx.CANCEL);
+                else if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)
+                    Sfx.play(this, Sfx.CURSOR);
+            }
+            return false;
+        });
+        for (int which : new int[] { AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL }) {
             Button b = d.getButton(which);
-            if (b != null) b.setTextColor(ACCENT);
+            if (b != null) { b.setTextColor(ACCENT); b.setAllCaps(false); shadow(b); }
         }
         return d;
     }

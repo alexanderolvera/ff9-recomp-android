@@ -31,6 +31,10 @@ final class ModDownloader {
     static volatile boolean busy, cancelled;
     static volatile String status = "";
 
+    /** Progress for the download queue: the phase ("Downloading", "Unpacking"), bytes so far and in all. */
+    interface Progress { void update(String phase, long got, long total); }
+    private static final Progress NONE = (a, b, t) -> { };
+
     private ModDownloader() {}
 
     static void cancel() {
@@ -39,25 +43,27 @@ final class ModDownloader {
     }
 
     /** Runs on the caller's thread. */
-    static void install(Context c, ModCatalog.Mod m) throws IOException {
+    static void install(Context c, ModCatalog.Mod m) throws IOException { install(c, m, NONE); }
+
+    static void install(Context c, ModCatalog.Mod m, Progress pr) throws IOException {
         busy = true;
         cancelled = false;
         try {
             File dl = new File(ModCatalog.dir(c), "downloads");
             dl.mkdirs();
-            String ext = m.url.toLowerCase(Locale.ROOT).contains(".7z") || m.format.equalsIgnoreCase("7z") ? ".7z" : ".zip";
-            File archive = new File(dl, m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + "-" + m.version + ext);
-            download(c, m, archive);
+            File archive = archive(c, m);
+            download(c, m, archive, pr);
             File game = new GameInstall(c).game;
             File unpack = new File(game, ".unpack-" + System.nanoTime());
             try {
                 status = "Unpacking " + m.name;
-                if (ext.equals(".7z")) {
+                pr.update("Unpacking", 0, 0);
+                if (archive.getName().endsWith(".7z")) {
                     Thread watch = new Thread(() -> {
                         while (busy && status.startsWith("Unpacking")) {
                             try {
                                 long[] p = nativeUn7zProgress();
-                                if (p != null && p[1] > 0) status = "Unpacking " + m.name + ": " + (100 * p[0] / p[1]) + "%";
+                                if (p != null && p[1] > 0) { status = "Unpacking " + m.name + ": " + (100 * p[0] / p[1]) + "%"; pr.update("Unpacking", p[0], p[1]); }
                                 Thread.sleep(500);
                             } catch (Throwable e) { return; }
                         }
@@ -86,6 +92,12 @@ final class ModDownloader {
         }
     }
 
+    /** Where a mod's download is kept while it comes in (a cut download resumes from it). */
+    static File archive(Context c, ModCatalog.Mod m) {
+        String ext = m.url.toLowerCase(Locale.ROOT).contains(".7z") || m.format.equalsIgnoreCase("7z") ? ".7z" : ".zip";
+        return new File(new File(ModCatalog.dir(c), "downloads"), m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + "-" + m.version + ext);
+    }
+
     /** The folder holding the mod in the unpacked archive: the one named like it, else a lone top folder, else the top. */
     static File modRoot(File unpacked, String folder) {
         File[] top = unpacked.listFiles();
@@ -95,7 +107,7 @@ final class ModDownloader {
         return unpacked;
     }
 
-    private static void download(Context c, ModCatalog.Mod m, File to) throws IOException {
+    private static void download(Context c, ModCatalog.Mod m, File to, Progress pr) throws IOException {
         long have = to.isFile() ? to.length() : 0;
         HttpURLConnection h = (HttpURLConnection) new URL(m.url).openConnection();
         h.setRequestProperty("User-Agent", "FF9Recomp/" + Updater.installedVersion(c));
@@ -122,8 +134,9 @@ final class ModDownloader {
                 if (cancelled) throw new IOException("cancelled");
                 o.write(b, 0, n);
                 got += n;
-                if (got - shown >= (4L << 20)) {
+                if (got - shown >= (1L << 20)) {
                     shown = got;
+                    pr.update("Downloading", got, total);
                     status = "Downloading " + m.name + ": " + Storage.human(got) + (total > 0 ? " of " + Storage.human(total) : "");
                 }
             }
