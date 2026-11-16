@@ -35,7 +35,8 @@ public class JobService extends Service {
     /** adb tests only (TestControl): Memoria's download, the Steam download's first step, without Steam. */
     static final String TEST_MEMORIA = "test_memoria";
     static final String ACTION_PAUSE = "com.ff9recomp.job.PAUSE", ACTION_CONTINUE = "com.ff9recomp.job.CONTINUE";
-    private static final String KIND = "job_kind", ARG = "job_arg";
+    /** job_ran: the pending job has run before (a continued import skips the files copied whole; a new one copies all). */
+    private static final String KIND = "job_kind", ARG = "job_arg", RAN = "job_ran";
 
     /** The job running (one of the kinds), or null. */
     static volatile String running;
@@ -78,7 +79,7 @@ public class JobService extends Service {
     /** Start a job (arg: the Steam download's folder, the import's folder URI; null otherwise). */
     static boolean start(Context c, String kind, String arg) {
         if (running != null) return false;
-        prefs(c).edit().putString(KIND, kind).putString(ARG, arg).commit();
+        prefs(c).edit().putString(KIND, kind).putString(ARG, arg).putBoolean(RAN, false).commit();
         begin(kind);
         c.startForegroundService(new Intent(c, JobService.class));
         return true;
@@ -108,8 +109,18 @@ public class JobService extends Service {
         if (running != null) return;
         String kind = prefs(c).getString(KIND, null);
         if (TO_SD.equals(kind) || TO_INTERNAL.equals(kind)) Storage.discardMove(c, TO_SD.equals(kind));
-        prefs(c).edit().remove(KIND).remove(ARG).commit();
+        clear(c);
         paused = false;
+    }
+
+    /** The job is over: forget it, and give back the import's hold on the picked folder. */
+    private static void clear(Context c) {
+        SharedPreferences p = prefs(c);
+        if (IMPORT.equals(p.getString(KIND, null)) && p.getString(ARG, null) != null) {
+            try { c.getContentResolver().releasePersistableUriPermission(Uri.parse(p.getString(ARG, null)), Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            catch (Exception ignored) { }
+        }
+        p.edit().remove(KIND).remove(ARG).remove(RAN).commit();
     }
 
     @Override
@@ -131,6 +142,8 @@ public class JobService extends Service {
         nm.cancel(ID + 1);
         working = true;
         String arg = prefs(this).getString(ARG, null);
+        boolean ranBefore = prefs(this).getBoolean(RAN, false);
+        prefs(this).edit().putBoolean(RAN, true).commit();
         PowerManager.WakeLock wl = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ff9recomp:job");
         wl.acquire(6 * 60 * 60 * 1000L);
         new Thread(() -> {
@@ -146,7 +159,7 @@ public class JobService extends Service {
             String msg;
             boolean finished = true;
             try {
-                msg = run(kind, arg);
+                msg = run(kind, arg, ranBefore);
             } catch (Paused e) {
                 msg = null;
             } catch (Throwable e) {
@@ -161,7 +174,7 @@ public class JobService extends Service {
                 finished = false;
                 msg = "Paused. Continue goes on where it stopped; nothing done so far is lost.";
             }
-            if (finished) prefs(this).edit().remove(KIND).remove(ARG).commit();
+            if (finished) clear(this);
             Log.i(TAG, kind + ": " + msg);
             status = msg;
             running = null;
@@ -186,7 +199,7 @@ public class JobService extends Service {
     }
 
     /** Runs the job; returns how it ended. Throws Paused when Pause stopped it. */
-    private String run(String kind, String arg) throws Exception {
+    private String run(String kind, String arg, boolean ranBefore) throws Exception {
         GameInstall gi = new GameInstall(this);
         switch (kind) {
             case STEAM: {
@@ -201,7 +214,7 @@ public class JobService extends Service {
                 catch (InterruptedException e) { throw new Paused(); }
                 return "Memoria " + MemoriaInstall.VERSION + " is downloaded.";
             case IMPORT:
-                gi.importFrom(Uri.parse(arg), w -> status = w);
+                gi.importFrom(Uri.parse(arg), w -> status = w, ranBefore);
                 return "Your FINAL FANTASY IX is ready" + (gi.hasMoguri() ? ", with Moguri Mod." : ".") + " Press Play (or Start).";
             default: {
                 boolean toSd = kind.equals(TO_SD);

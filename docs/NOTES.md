@@ -220,7 +220,9 @@
 - Resuming: the Steam download skips files whose SHA-1 already matches; the import and the move
   write `.part` files and rename them, so a file that is there is whole, and both skip those. The
   import keeps a persistable read grant on the picked folder, so Continue can read it after a
-  restart. Discarding a move deletes its partial copy; discarding a download or an import keeps
+  restart; the grant is given back when the job ends or is discarded. Only a continued import
+  (`job_ran`) skips files of the right size; a new one copies everything, so importing again
+  repairs a damaged file (both from FF7Recomp 1.1.14). Discarding a move deletes its partial copy; discarding a download or an import keeps
   the files.
 - The mod queue: `QueueService` keeps the process in the foreground while `DownloadQueue` works.
   Pause stops the running download (its partial archive stays) and is persisted in

@@ -66,7 +66,11 @@ final class GameInstall {
     }
 
     // ---------------------------------------------------------------- import from a folder
-    void importFrom(Uri tree, Progress p) throws IOException {
+    /**
+     * Copies the game from the picked folder. resume: a continued import, which skips files already
+     * copied whole (same size); a new one copies everything, so importing again repairs a damaged file.
+     */
+    void importFrom(Uri tree, Progress p, boolean resume) throws IOException {
         ContentResolver cr = ctx.getContentResolver();
         // the game may be anywhere below the picked folder (Steam's common/, a copy in Downloads,
         // a folder named differently): find the one that holds StreamingAssets and x64
@@ -77,7 +81,7 @@ final class GameInstall {
                     + "Pick the game's folder, the one with FF9_Launcher.exe in it.");
         game.mkdirs();
         long[] count = {0, 0};
-        copyTree(cr, tree, rootId, game, "", p, count);
+        copyTree(cr, tree, rootId, game, "", p, count, resume);
         configureMemoria();
         p.update("Imported " + count[0] + " files (" + (count[1] >> 20) + " MB).");
     }
@@ -111,7 +115,7 @@ final class GameInstall {
         return null;
     }
 
-    private void copyTree(ContentResolver cr, Uri tree, String docId, File dst, String rel, Progress p, long[] count) throws IOException {
+    private void copyTree(ContentResolver cr, Uri tree, String docId, File dst, String rel, Progress p, long[] count, boolean resume) throws IOException {
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
         try (Cursor c = cr.query(children, new String[] {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -125,10 +129,10 @@ final class GameInstall {
                 File out = new File(dst, name);
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     out.mkdirs();
-                    copyTree(cr, tree, id, out, r, p, count);
+                    copyTree(cr, tree, id, out, r, p, count, resume);
                 } else {
                     JobService.checkPause();
-                    if (out.isFile() && out.length() == size) continue;    // copied before a pause or a stop
+                    if (resume && out.isFile() && out.length() == size) continue;    // copied before a pause or a stop
                     p.update("Copying " + r);
                     File part = new File(out.getPath() + ".part");      // whole files only: a cut copy is redone
                     try (InputStream in = cr.openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, id));
