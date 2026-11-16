@@ -48,7 +48,9 @@
   objects' type ID is the class ID (match type trees by it); AnimationCurve wrap modes are
   Unity's internal enum (0 ping-pong, 1 repeat, 2 clamp); CharacterInfo uv is bottom-left with
   positive height and vert.y is relative to the ascent; Memoria casts SoLoud handles to int (C++
-  objects are allocated below 2 GB, src/host/lowmem.cpp); .NET 8 rejects relative
+  objects are allocated below 2 GB, src/host/lowmem.cpp: 1 GB when free, else the first free
+  64 MB-aligned place below 2 GB, since a Pixel 5 has 1 GB taken (issue 2); FF9_TEST_LOWMEM_TAKEN=1
+  blocks 1 GB to test that); .NET 8 rejects relative
   Assembly.LoadFile (detour in Compat.cs); Android .NET crypto needs a JVM (src/host/crypto.c).
 - Memoria.ini on the device: [Audio] Backend = 2 (SoLoud).
 
