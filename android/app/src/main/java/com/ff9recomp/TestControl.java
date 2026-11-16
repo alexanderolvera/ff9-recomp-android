@@ -89,6 +89,40 @@ public class TestControl extends BroadcastReceiver {
                 out.put("entries", names);
                 break;
             }
+            case "STEAM_DOWNLOAD": {
+                // tests download into a scratch folder only, never the player's game:
+                // --es op download|memoria|stop|status --es dir ABS (logcat tags FF9SteamFiles, FF9Memoria)
+                String op = intent.getStringExtra("op") != null ? intent.getStringExtra("op") : "status";
+                String dir = intent.getStringExtra("dir");
+                GameInstall gi = new GameInstall(ctx);
+                if (op.equals("download") || op.equals("memoria")) {
+                    if (dir == null || !dir.startsWith("/")) { out.put("error", "dir: an absolute scratch folder"); break; }
+                    File d = new File(dir).getCanonicalFile();
+                    if (d.equals(gi.game.getCanonicalFile()) || d.getPath().startsWith(gi.game.getCanonicalPath() + "/")) {
+                        out.put("error", "not the player's game folder"); break;
+                    }
+                    if (op.equals("download")) SteamFiles.start(ctx, d);
+                    else if (!SteamFiles.busy) {
+                        SteamFiles.busy = true;
+                        SteamFiles.cancel.set(false);
+                        new Thread(() -> {
+                            try {
+                                MemoriaInstall m = new MemoriaInstall(gi);
+                                m.fetch(w -> SteamFiles.status = w, SteamFiles.cancel);
+                                m.install(d, w -> SteamFiles.status = w);
+                                SteamFiles.status = "memoria installed";
+                            } catch (Throwable e) {
+                                android.util.Log.e("FF9Memoria", "test install", e);
+                                SteamFiles.status = "memoria failed: " + e;
+                            }
+                            SteamFiles.busy = false;
+                        }).start();
+                    }
+                } else if (op.equals("stop")) SteamFiles.cancel.set(true);
+                out.put("busy", SteamFiles.busy);
+                out.put("status", SteamFiles.status);
+                break;
+            }
             default:
                 out.put("error", "unknown action " + a);
             }

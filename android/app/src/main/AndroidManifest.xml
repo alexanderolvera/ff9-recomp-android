@@ -44,13 +44,14 @@
             android:taskAffinity=".guide" android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode" />
-        <!-- adb test API (TestControl): GET/SET/STOP/REPORT. DUMP: only the shell may call it -->
+        <!-- adb test API (TestControl): GET/SET/STOP/REPORT/STEAM_DOWNLOAD. DUMP: only the shell may call it -->
         <receiver android:name=".TestControl" android:exported="true" android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.ff9recomp.test.GET" />
                 <action android:name="com.ff9recomp.test.SET" />
                 <action android:name="com.ff9recomp.test.STOP" />
                 <action android:name="com.ff9recomp.test.REPORT" />
+                <action android:name="com.ff9recomp.test.STEAM_DOWNLOAD" />
             </intent-filter>
         </receiver>
     </application>

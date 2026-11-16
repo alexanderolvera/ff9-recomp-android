@@ -121,10 +121,7 @@ final class GameInstall {
                 String id = c.getString(0), name = c.getString(1), mime = c.getString(2);
                 long size = c.getLong(3);
                 String r = rel.isEmpty() ? name : rel + "/" + name;
-                // Windows-only parts of the install are not needed on Android, except the battle
-                // effects plugin, which the app runs in its x86-64 interpreter
-                if (r.equalsIgnoreCase("x86") || r.toLowerCase().endsWith(".exe") || r.equalsIgnoreCase("x64/FF9_Data/Mono")) continue;
-                if (rel.equalsIgnoreCase("x64/FF9_Data/Plugins") && !name.equalsIgnoreCase("FF9SpecialEffectPlugin.dll")) continue;
+                if (skipped(r)) continue;
                 File out = new File(dst, name);
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     out.mkdirs();
@@ -143,6 +140,18 @@ final class GameInstall {
                 }
             }
         }
+    }
+
+    /**
+     * Windows-only parts of the install, not needed on Android (rel: a path under the game folder,
+     * '/' separated): the x86 build, programs, the Mono runtime and the plugins, except the battle
+     * effects plugin, which the app runs in its x86-64 interpreter.
+     */
+    static boolean skipped(String rel) {
+        String l = rel.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        if (l.equals("x86") || l.startsWith("x86/") || l.endsWith(".exe")) return true;
+        if (l.equals("x64/ff9_data/mono") || l.startsWith("x64/ff9_data/mono/")) return true;
+        return l.startsWith("x64/ff9_data/plugins/") && !l.equals("x64/ff9_data/plugins/ff9specialeffectplugin.dll");
     }
 
     /** Memoria settings the Android build needs: the SoLoud audio backend. */

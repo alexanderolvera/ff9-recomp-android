@@ -154,3 +154,19 @@
   Portraits and icons are cut from the player's atlases at runtime (GPU read-back once per atlas) into
   files/worldmap/ui_<Atlas>_<sprite>.png; nothing ships with the app. Reflection lookups are cached;
   gear and counters refresh once a second, item lists only when the inventory changes.
+
+## Download from Steam (from FF7Recomp's handoff part 2)
+- Game files → Download / Repair from Steam (SteamFiles.java): JavaSteam depot download of app
+  377840's Windows depots, every file SHA-1 checked, intact files kept (resume and repair). The
+  import's skip rule (GameInstall.skipped) applies, and the files Memoria replaces are not taken.
+- Then Memoria (MemoriaInstall.java): Memoria.Patcher.exe v2026.11.09 from Memoria's GitHub
+  release (SHA-256 pinned, cached in files/steam), unpacked as its Program.cs does: trailer
+  "MEMORIA\0" + uncompressed size + gzip offset at the end (or within 0x2700..0x2920 of it when
+  signed); entries u32 size, i64 ticks, u8 part count, parts (i16 id, high bit = new name: u8
+  length + UTF-8), data. "{PLATFORM}" = x64. An existing Memoria.ini is merged (player's values
+  kept, new keys added).
+- Steam over WebSocket only (JavaSteam's TCP path needs BouncyCastle on the classpath; FF7 #49).
+- Test: `am broadcast -a com.ff9recomp.test.STEAM_DOWNLOAD -n com.ff9recomp/.TestControl --es op
+  download|memoria|stop|status --es dir ABS` (never the player's game folder). Tested 2026-11-15:
+  op memoria gives files identical to a PC install (Assembly-CSharp, Memoria.Scripts SHA-256), the
+  ini merge keeps settings. The Steam download itself is not tested yet (needs a QR sign-in).

@@ -81,6 +81,27 @@ final class SteamLink {
         state = new File(dir, "state.txt");
     }
 
+    SharedPreferences prefs() { return prefs; }
+
+    /** A signed-in connection for SteamFiles (the caller closes it). */
+    Session open() throws Exception {
+        if (!signedIn()) throw new IOException("not signed in to Steam");
+        Session s = new Session();
+        try {
+            s.awaitConnected();
+            try {
+                s.logOn(account(), prefs.getString("token", ""));
+            } catch (TokenRejected e) {
+                prefs.edit().remove("token").apply();
+                throw e;
+            }
+            return s;
+        } catch (Exception e) {
+            s.close();
+            throw e;
+        }
+    }
+
     boolean signedIn() { return !prefs.getString("token", "").isEmpty(); }
     String account() { return prefs.getString("account", ""); }
 
@@ -125,7 +146,7 @@ final class SteamLink {
         TokenRejected(EResult r) { super("Steam asks you to sign in again (" + r + ")"); }
     }
 
-    private static final class Session implements AutoCloseable {
+    static final class Session implements AutoCloseable {
         // WebSocket only: JavaSteam's TCP path needs BouncyCastle, which the APK does not carry, and
         // Steam's server list hands out TCP servers at random (FF7Recomp #49: sign-in crashed)
         final SteamClient client = new SteamClient(in.dragonbra.javasteam.steam.steamclient.configuration.SteamConfiguration
@@ -137,6 +158,7 @@ final class SteamLink {
         volatile boolean running = true;
         boolean playingSent;
         int app;                                         // FF9 (when the account owns it)
+        int cell;                                        // Steam's content region for this connection
 
         Session() {
             mgr.subscribe(ConnectedCallback.class, cb -> connected.complete(true));
@@ -169,6 +191,7 @@ final class SteamLink {
                 throw new TokenRejected(cb.getResult());
             if (cb.getResult() != EResult.OK)
                 throw new IOException("Steam did not sign in (" + cb.getResult() + ")");
+            cell = cb.getCellID();
         }
 
         @Override public void close() {
@@ -246,7 +269,7 @@ final class SteamLink {
 
     /** Tells Steam this account is (or no longer is) playing FF9, as the Steam client does while
      *  the game runs: Steam keeps a game's stats ready only for a running game. */
-    private static boolean owns(Session s, int app) {
+    static boolean owns(Session s, int app) {
         try {
             EResult r = s.client.getHandler(in.dragonbra.javasteam.steam.handlers.steamapps.SteamApps.class)
                     .getAppOwnershipTicket(app).toFuture().get(30, TimeUnit.SECONDS).getResult();

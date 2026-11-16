@@ -208,6 +208,7 @@ public class LauncherActivity extends Activity {
 
     private void play(boolean autoload) {
         if (busy) return;
+        if (SteamFiles.busy) { status.setText("Wait for the Steam download to finish, or stop it."); return; }
         if (!ready()) { show("game"); return; }
         try {
             Settings.apply(this, install.game);
@@ -569,6 +570,18 @@ public class LauncherActivity extends Activity {
         actions.addView(button(has ? "Import again" : "Import game folder", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_GAME)));
         col.addView(actions);
 
+        TextView hd = heading("Download from Steam");
+        hd.setPadding(0, dp(14), 0, dp(4));
+        col.addView(hd);
+        col.addView(note("No PC needed: sign in to Steam with a QR code and the app downloads FINAL FANTASY IX (about 8 GB, every file checked against Steam's), "
+                + "then installs Memoria " + MemoriaInstall.VERSION + " from its GitHub page. A stopped download goes on where it was; "
+                + (has ? "Repair downloads only the files that are missing or damaged, and keeps your mods, saves and Memoria settings." : "Moguri Mod can be added from Mods afterwards.")));
+        LinearLayout dl = row();
+        if (SteamFiles.busy) dl.addView(button("Stop the download", v -> SteamFiles.cancel.set(true)));
+        else dl.addView(button(has ? "Repair from Steam" : "Download from Steam", v -> steamDownload()));
+        col.addView(dl);
+        if (SteamFiles.busy) pollDownload();
+
         TextView hs = heading("Saves");
         hs.setPadding(0, dp(14), 0, dp(4));
         col.addView(hs);
@@ -596,6 +609,25 @@ public class LauncherActivity extends Activity {
         col.addView(ap);
         return col;
     }
+
+    private void steamDownload() {
+        if (SteamFiles.busy) return;
+        if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first."); return; }
+        if (!new SteamLink(this).signedIn()) { status.setText("Sign in to Steam first, then press Download again."); steamSignIn(); return; }
+        SteamFiles.start(this, null);
+        refresh();
+        focusContent();
+    }
+
+    private final Runnable downloadTick = new Runnable() {
+        @Override public void run() {
+            status.setText(SteamFiles.status);
+            if (SteamFiles.busy) content.postDelayed(this, 500);
+            else { install = new GameInstall(LauncherActivity.this); refresh(); status.setText(SteamFiles.status); }
+        }
+    };
+
+    private void pollDownload() { content.removeCallbacks(downloadTick); content.postDelayed(downloadTick, 500); }
 
     private void moveStorage() {
         boolean toSd = !Storage.onSd(this);
