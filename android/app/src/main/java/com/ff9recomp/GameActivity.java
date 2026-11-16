@@ -80,6 +80,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         setContentView(root);
         // Smooth 120: ask the display for its fastest mode at this resolution (the Thor's 120 Hz)
         preferRefreshRate(prefs.getInt("fps", 1) == 2 ? 120 : 60);
+        startDisplayWatch(prefs.getInt("fps", 1));
         if (prefs.getBoolean("bottom_screen", true)) showCompanion();
         ui.post(poller);
         updateTouch();
@@ -348,8 +349,89 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         @Override public void onInputDeviceChanged(int id) { updateTouch(); }
     };
 
+    // ---- the screen's real refresh rate (FF7Recomp #46): the game draws one frame per vsync, so
+    // when the system holds the screen at 60 Hz (power saving, a refresh-rate setting, a game
+    // booster) 120 can't go above 60 however the app asks. Every 10 s the rate is counted over one
+    // second of vsyncs; changes go to files/display.txt, which Report a problem includes. With
+    // 120 chosen and the screen held at 60 Hz, the player is told once.
+    private static final long DISPLAY_EVERY_MS = 10_000;
+    private int displayHzSeen = -1, displayLowSamples, displayFps;
+    private boolean displayToldLow, displayWatching, displayFileStarted;
+    private final Runnable displaySample = this::sampleDisplayRate;
+
+    private void startDisplayWatch(int fps) {
+        displayFps = fps;
+        android.view.Display d = getDisplay();
+        StringBuilder s = new StringBuilder();
+        s.append("display ").append(d == null ? "?" : d.getDisplayId());
+        if (d != null) {
+            s.append(": mode ").append(d.getMode().getModeId()).append(" @ ").append(Math.round(d.getMode().getRefreshRate())).append(" Hz; modes");
+            for (android.view.Display.Mode m : d.getSupportedModes())
+                s.append(' ').append(m.getModeId()).append('=').append(m.getPhysicalWidth()).append('x')
+                 .append(m.getPhysicalHeight()).append('@').append(Math.round(m.getRefreshRate()));
+        }
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null) s.append("; power saving ").append(pm.isPowerSaveMode() ? "on" : "off")
+                         .append(", thermal status ").append(pm.getCurrentThermalStatus());
+        s.append("; frame rate setting ").append(fps);
+        displayLog(s.toString());
+        displayWatching = true;
+        ui.postDelayed(displaySample, 3000);
+    }
+
+    private void sampleDisplayRate() {
+        if (!displayWatching) return;
+        final android.view.Choreographer ch = android.view.Choreographer.getInstance();
+        ch.postFrameCallback(new android.view.Choreographer.FrameCallback() {
+            long first; int frames;
+            @Override public void doFrame(long t) {
+                if (!displayWatching) return;
+                if (first == 0) first = t;
+                else frames++;
+                if (t - first < 1_000_000_000L) { ch.postFrameCallback(this); return; }
+                displayMeasured(Math.round(frames * 1e9f / (t - first)));
+                ui.postDelayed(displaySample, DISPLAY_EVERY_MS);
+            }
+        });
+    }
+
+    private void displayMeasured(int rate) {
+        android.view.Display d = getDisplay();
+        int modeHz = d == null ? 0 : Math.round(d.getMode().getRefreshRate());
+        if (Math.abs(rate - displayHzSeen) > 5) {
+            displayHzSeen = rate;
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            displayLog("screen at " + rate + " Hz (mode " + modeHz + " Hz" + (pm != null && pm.isPowerSaveMode() ? ", power saving on" : "") + ")");
+        }
+        float best = 0;
+        if (d != null) for (android.view.Display.Mode m : d.getSupportedModes()) best = Math.max(best, m.getRefreshRate());
+        boolean low = displayFps == 2 && rate <= 70 && best >= 90;      // 120 chosen, the screen held at 60
+        displayLowSamples = low ? displayLowSamples + 1 : 0;
+        if (displayLowSamples >= 2 && !displayToldLow && hasWindowFocus()) {
+            displayToldLow = true;
+            displayLog("told the player: 120 chosen, the screen is held at " + rate + " Hz");
+            android.widget.Toast.makeText(this, "Your screen is running at 60 Hz, so 120 FPS can't go above 60. "
+                    + "Turn off power saving and set the screen's refresh rate to its highest, or choose 60 FPS.",
+                    android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void displayLog(String line) {
+        Log.i(TAG, line);
+        File f = new File(new GameInstall(this).files, "display.txt");
+        boolean append = displayFileStarted;   // a new file each run
+        displayFileStarted = true;
+        try (java.io.FileWriter w = new java.io.FileWriter(f, append)) {
+            w.write(new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date()) + " " + line + "\n");
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "display.txt: " + e);
+        }
+    }
+
     @Override
     protected void onDestroy() {
+        displayWatching = false;
+        ui.removeCallbacks(displaySample);
         try { unregisterReceiver(testPad); } catch (Exception ignored) { }
         if (companion != null) { companion.dismiss(); companion = null; }
         if (guideTab != null) { guideTab.dismiss(); guideTab = null; }

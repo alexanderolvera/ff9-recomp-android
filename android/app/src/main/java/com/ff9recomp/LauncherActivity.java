@@ -686,43 +686,97 @@ public class LauncherActivity extends Activity {
 
     // ------------------------------------------------------------------ report a problem
 
+    private boolean reportState, reportBusy;
+    private String reportDone;
+
     private View reportPage() {
         LinearLayout col = column();
         col.addView(heading("Report a problem"));
-        col.addView(note("One zip with the logs, the crash record and the settings. It goes to Downloads, then you choose where to send it: nothing is sent by the app."));
-        CheckBox saves = new CheckBox(this);
-        saves.setText(withNote("Include my saves", "useful when a save does not load"));
-        saves.setChecked(withSaves);
-        saves.setOnCheckedChangeListener((x, on) -> withSaves = on);
-        col.addView(saves);
+        col.addView(note("One zip with what it takes to look into a problem: the game's logs, how it last closed, your device, "
+                + "screen and settings, the game's install and your mod list. Not your game files, mods or Steam sign-in. "
+                + "Nothing is sent anywhere until you share it."));
+        String exit = Reports.lastGameExit(this);
+        if (exit != null) col.addView(text("The game last closed: " + exit, 15, TEXT));
+        List<File> saves = Reports.saves(this);
+        CheckBox sv = new CheckBox(this);
+        sv.setText(withNote(saves.isEmpty() ? "Your saves (none yet)" : "Your saves (" + saves.size() + (saves.size() == 1 ? " file)" : " files)"),
+                "useful when a save does not load"));
+        sv.setEnabled(!saves.isEmpty());
+        sv.setChecked(withSaves && !saves.isEmpty());
+        sv.setOnCheckedChangeListener((x, on) -> withSaves = on);
+        col.addView(sv);
+        File st = Reports.latestState(this);
+        CheckBox stb = new CheckBox(this);
+        stb.setText(withNote(st == null ? "Your newest save state (none yet)"
+                : "Your newest save state (" + new java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.US).format(new java.util.Date(st.lastModified()))
+                  + ", " + Math.max(1, st.length() >> 10) + " KB)", "lets the problem be replayed where it happens"));
+        stb.setEnabled(st != null);
+        stb.setChecked(reportState && st != null);
+        stb.setOnCheckedChangeListener((x, on) -> reportState = on);
+        col.addView(stb);
+        col.addView(note("A zip attached on GitHub is public: untick the saves, or share the zip privately, if you'd rather."));
         LinearLayout actions = row();
-        actions.addView(button("Make the report", v -> makeReport()));
+        Button save = button(reportBusy ? "Packing..." : "Save to Downloads", v -> makeReport(false));
+        Button share = button("Share...", v -> makeReport(true));
+        save.setEnabled(!reportBusy);
+        share.setEnabled(!reportBusy);
+        actions.addView(save);
+        actions.addView(share);
         col.addView(actions);
+        if (reportDone != null) col.addView(text(reportDone, 15, ACCENT));
+        Uri issue = Reports.issueUrl(this);
+        if (issue != null) {
+            col.addView(note("Then open an issue on GitHub (the device lines are filled in) and drag the zip from Downloads into the comment box."));
+            LinearLayout ir = row();
+            ir.addView(button("Open a GitHub issue", v -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, issue)); }
+                catch (Exception e) { status.setText("No browser to open " + Reports.ISSUES); }
+            }));
+            col.addView(ir);
+        } else {
+            col.addView(note("Then send the zip to the developer however you talk to them (Share... opens the apps that can send it)."));
+        }
         return col;
     }
 
-    private void makeReport() {
+    /** Builds the zip off the UI thread, saves it to Downloads, then shares it (share: true). */
+    private void makeReport(boolean share) {
+        if (reportBusy) return;
+        reportBusy = true;
+        reportDone = null;
         busy = true;
+        refresh();
         status.setText("Making the report...");
+        final boolean saves = withSaves, state = reportState;
         new Thread(() -> {
-            String msg;
-            Uri shared = null;
+            String done;
+            Uri uri = null;
+            File zip = null;
             try {
-                File zip = Reports.build(this, withSaves);
-                shared = Reports.toDownloads(this, zip);
-                msg = "Saved to Downloads: " + zip.getName();
+                zip = Reports.build(this, saves, state);
+                uri = Reports.toDownloads(this, zip);
+                done = "Saved to Downloads: " + zip.getName() + " (" + String.format(java.util.Locale.US, "%.1f MB", zip.length() / 1048576.0) + ")";
             } catch (Exception e) {
-                msg = "The report failed: " + e.getMessage();
+                done = "Could not make the report: " + e.getMessage();
             }
-            Uri u = shared;
-            String m = msg;
+            final String msg = done;
+            final Uri u = uri;
+            final String name = zip == null ? "" : zip.getName();
             runOnUiThread(() -> {
+                reportBusy = false;
                 busy = false;
-                status.setText(m);
-                if (u != null) {
-                    Intent send = new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM, u)
+                reportDone = msg;
+                status.setText(msg);
+                refresh();
+                if (share && u != null) {
+                    Intent send = new Intent(Intent.ACTION_SEND).setType("application/zip")
+                            .putExtra(Intent.EXTRA_STREAM, u)
+                            .putExtra(Intent.EXTRA_SUBJECT, "FF9Recomp problem report")
+                            .putExtra(Intent.EXTRA_TEXT, "FF9Recomp " + Reports.version(this) + " on " + Reports.device())
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    try { startActivity(Intent.createChooser(send, "Send the report")); } catch (Exception ignored) { }
+                    send.setClipData(android.content.ClipData.newRawUri(name, u));
+                    try { startActivity(Intent.createChooser(send, "Send the report")); }
+                    catch (Exception e) { status.setText("Nothing on this device can share a file."); }
                 }
             });
         }).start();

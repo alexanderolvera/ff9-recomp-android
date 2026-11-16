@@ -28,15 +28,19 @@ import java.util.zip.ZipOutputStream;
 
 /**
  * Report a problem (ported from FF7Recomp): one zip with what it takes to look into a problem.
- *   report.txt   app version, device, storage, the launcher's settings, how the app's processes
- *                last ended (Android's exit records)
- *   logs/        ff9.log (this run and the one before), setup-error.txt, game/Memoria.log,
+ *   report.txt   app version, device (model, chip, Android, RAM, screen refresh rates, power
+ *                saving), storage, the game's install (Memoria, Moguri, which files are missing),
+ *                the mods in load order, the launcher's settings, how the app's processes last
+ *                ended (Android's exit records)
+ *   logs/        ff9.log (this run and the one before), setup-error.txt, display.txt (the
+ *                screen's refresh rate while playing), env.txt, game/Memoria.log,
  *                game/Memoria.ini, game/Settings.ini
  *   java-crash.txt  the last Java crash, written by the app as it crashes
  *   tombstone.pb the last native crash's record from Android (Android 12+)
  *   anr.txt      the last "not responding" record (Android 11+)
  *   saves/       the game's saves, when asked for
- * Not in it: the game's files and mods. Nothing leaves the device here: the zip goes to Downloads
+ *   savestates/  the newest save state, when asked for
+ * Not in it: the game's files, the mods themselves, the Steam sign-in. Nothing leaves the device here: the zip goes to Downloads
  * and the share sheet. It reads only the app's own files and Android's records for this app:
  * no system log, no commands, no device fingerprint (FF7Recomp 0.1.59 ran logcat and some phones
  * began flagging the app).
@@ -59,6 +63,15 @@ final class Reports {
         return out;
     }
 
+    /** The newest save state (SaveStates' slots), or null. */
+    static File latestState(Context c) {
+        File best = null;
+        File[] fs = SaveStates.dir(c).listFiles();
+        if (fs != null) for (File f : fs)
+            if (f.isFile() && f.getName().endsWith(".dat") && (best == null || f.lastModified() > best.lastModified())) best = f;
+        return best;
+    }
+
     /** How the game's process last ended, in a line ("crashed (native), 13 Nov 22:42"), or null. */
     static String lastGameExit(Context c) {
         if (Build.VERSION.SDK_INT < 30) return null;
@@ -69,7 +82,7 @@ final class Reports {
     }
 
     /** Builds the zip in the app's cache and returns it. */
-    static File build(Context c, boolean withSaves) throws IOException {
+    static File build(Context c, boolean withSaves, boolean withState) throws IOException {
         File dir = new File(c.getCacheDir(), "reports");
         File[] old = dir.listFiles();
         if (old != null) for (File f : old) f.delete();
@@ -79,7 +92,7 @@ final class Reports {
         GameInstall gi = new GameInstall(c);
         try (ZipOutputStream z = new ZipOutputStream(new java.io.FileOutputStream(zip))) {
             put(z, "report.txt", summary(c).getBytes(StandardCharsets.UTF_8));
-            for (String p : new String[] { "ff9.log", "ff9.prev.log", "setup-error.txt" }) {
+            for (String p : new String[] { "ff9.log", "ff9.prev.log", "setup-error.txt", "display.txt", "env.txt" }) {
                 File f = new File(gi.files, p);
                 if (f.isFile()) putFile(z, "logs/" + p, f, MAX_LOG);
             }
@@ -94,6 +107,12 @@ final class Reports {
             byte[] anr = lastTrace(c, ApplicationExitInfo.REASON_ANR);
             if (anr != null) put(z, "anr.txt", anr);
             if (withSaves) for (File f : saves(c)) putFile(z, "saves/" + f.getName(), f, Long.MAX_VALUE);
+            File st = withState ? latestState(c) : null;
+            if (st != null) {
+                putFile(z, "savestates/" + st.getName(), st, Long.MAX_VALUE);
+                File info = new File(st.getParentFile(), st.getName().replace(".dat", ".txt"));
+                if (info.isFile()) putFile(z, "savestates/" + info.getName(), info, MAX_LOG);
+            }
         }
         return zip;
     }
@@ -117,6 +136,16 @@ final class Reports {
         return uri;
     }
 
+    /** A new issue with the device lines filled in, or null while there is no public repository. */
+    static Uri issueUrl(Context c) {
+        if (ISSUES == null) return null;
+        String body = "**What happened**\n<!-- What you did, what you expected, what you saw instead. -->\n\n\n"
+                + "**Device**\n- Device and chip: " + device() + "\n- Android version: " + Build.VERSION.RELEASE
+                + "\n- FF9Recomp version: " + version(c) + "\n\n"
+                + "**Report**\n<!-- Drag the FF9Recomp-report zip from your Downloads folder here. -->\n\n";
+        return Uri.parse(ISSUES).buildUpon().appendQueryParameter("labels", "bug").appendQueryParameter("body", body).build();
+    }
+
     static String summary(Context c) {
         StringBuilder s = new StringBuilder();
         s.append("FF9Recomp problem report, ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(new Date())).append("\n\n");
@@ -126,15 +155,49 @@ final class Reports {
         ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
         ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
-        s.append("RAM: ").append(mi.totalMem >> 20).append(" MB, ").append(mi.availMem >> 20).append(" MB free\n");
+        s.append("ABIs: ").append(String.join(", ", Build.SUPPORTED_ABIS)).append("\n");
+        s.append("RAM: ").append(mi.totalMem >> 20).append(" MB, ").append(mi.availMem >> 20).append(" MB free; Java heap ")
+         .append(am.getMemoryClass()).append("/").append(am.getLargeMemoryClass()).append(" MB\n");
         android.util.DisplayMetrics dm = c.getResources().getDisplayMetrics();
-        s.append("Screen: ").append(dm.widthPixels).append("x").append(dm.heightPixels).append(", ").append(dm.densityDpi).append(" dpi\n");
+        s.append("Screen: ").append(dm.widthPixels).append("x").append(dm.heightPixels).append(", ").append(dm.densityDpi).append(" dpi");
+        android.hardware.display.DisplayManager dmg = (android.hardware.display.DisplayManager) c.getSystemService(Context.DISPLAY_SERVICE);
+        android.view.Display disp = dmg.getDisplay(android.view.Display.DEFAULT_DISPLAY);
+        if (disp != null) {   // refresh rates: now and what the screen offers
+            s.append(", ").append(Math.round(disp.getMode().getRefreshRate())).append(" Hz now (offers");
+            java.util.TreeSet<Integer> rates = new java.util.TreeSet<>();
+            for (android.view.Display.Mode m : disp.getSupportedModes()) rates.add(Math.round(m.getRefreshRate()));
+            for (int r : rates) s.append(' ').append(r);
+            s.append(")");
+        }
+        s.append("\nDisplays: ").append(dmg.getDisplays().length);
+        android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(Context.POWER_SERVICE);
+        if (pm != null) s.append("\nPower saving: ").append(pm.isPowerSaveMode() ? "on" : "off")
+                        .append(", thermal status ").append(pm.getCurrentThermalStatus());
+        s.append("\n");
         GameInstall gi = new GameInstall(c);
-        s.append("Files: ").append(gi.files.getAbsolutePath()).append(", ").append(gi.files.getUsableSpace() >> 20).append(" MB free\n");
+        s.append("Files: ").append(gi.files.getAbsolutePath()).append(Storage.onSd(c) ? " (SD card)" : "").append(", ")
+         .append(gi.files.getUsableSpace() >> 20).append(" MB free\n");
         s.append("Game: ").append(gi.hasGame() ? "imported" : "not imported");
         String missing = gi.hasGame() ? gi.missingMessage() : null;
         if (missing != null) s.append(" (").append(missing).append(")");
-        s.append(gi.hasMoguri() ? ", Moguri Mod found" : "").append("\n\n");
+        s.append(gi.hasMoguri() ? ", Moguri Mod found" : "").append("\n");
+        File[] top = gi.game.listFiles();
+        if (top != null) {
+            java.util.TreeSet<String> names = new java.util.TreeSet<>();
+            for (File f : top) names.add(f.getName() + (f.isDirectory() ? "/" : ""));
+            s.append("Game folder: ").append(String.join(", ", names)).append("\n");
+        }
+        File prime = new File(gi.game, "x64/FF9_Data/Managed/Memoria.Prime.dll");
+        if (prime.isFile()) s.append("Memoria.Prime.dll: ").append(prime.length()).append(" bytes, ")
+                             .append(new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(prime.lastModified()))).append("\n");
+        try {
+            List<String> mods = ModCatalog.enabled(c);
+            s.append("Mods on (highest priority first): ").append(mods.isEmpty() ? "none" : String.join(", ", mods)).append("\n");
+        } catch (Exception e) { s.append("Mods: ").append(e.getMessage()).append("\n"); }
+        File st = latestState(c);
+        s.append("Saves: ").append(saves(c).size()).append(" files; newest save state: ")
+         .append(st == null ? "none" : st.getName() + " " + new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(new Date(st.lastModified()))).append("\n");
+        s.append("Steam: ").append(new SteamLink(c).signedIn() ? "signed in" : "not signed in").append("\n\n");
 
         s.append("Settings:\n");
         SharedPreferences p = c.getSharedPreferences("launcher", Context.MODE_PRIVATE);

@@ -21,7 +21,7 @@ import java.util.Map;
  *   am broadcast -a com.ff9recomp.test.GET    -n com.ff9recomp/.TestControl
  *   am broadcast -a com.ff9recomp.test.SET    -n com.ff9recomp/.TestControl --ez widescreen true --ei speed 2
  *   am broadcast -a com.ff9recomp.test.STOP   -n com.ff9recomp/.TestControl
- *   am broadcast -a com.ff9recomp.test.REPORT -n com.ff9recomp/.TestControl [--ez saves true]
+ *   am broadcast -a com.ff9recomp.test.REPORT -n com.ff9recomp/.TestControl [--ez saves true] [--ez state true]
  *   am start -n com.ff9recomp/.LauncherActivity -f 0x24000000 --ez test_play true
  *   am broadcast -a com.ff9recomp.test.PAD -p com.ff9recomp --ei buttons 0x1000 --ei ms 100   (GameActivity)
  *
@@ -72,7 +72,7 @@ public class TestControl extends BroadcastReceiver {
                 break;
             }
             case "REPORT": {
-                File zip = Reports.build(ctx, intent.getBooleanExtra("saves", false));
+                File zip = Reports.build(ctx, intent.getBooleanExtra("saves", false), intent.getBooleanExtra("state", false));
                 File to = new File(new GameInstall(ctx).files, "report-test.zip");
                 try (java.io.InputStream in = new java.io.FileInputStream(zip); java.io.OutputStream o = new java.io.FileOutputStream(to)) {
                     byte[] buf = new byte[1 << 16];
