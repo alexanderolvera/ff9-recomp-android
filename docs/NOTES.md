@@ -169,4 +169,4 @@
 - Test: `am broadcast -a com.ff9recomp.test.STEAM_DOWNLOAD -n com.ff9recomp/.TestControl --es op
   download|memoria|stop|status --es dir ABS` (never the player's game folder). Tested 2026-11-15:
   op memoria gives files identical to a PC install (Assembly-CSharp, Memoria.Scripts SHA-256), the
-  ini merge keeps settings. The Steam download itself is not tested yet (needs a QR sign-in).
+  ini merge keeps settings. The Steam download itself is not tested: it needs an account that owns FF9 on Steam (the developer has the GOG release).
