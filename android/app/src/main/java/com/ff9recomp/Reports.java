@@ -46,8 +46,8 @@ import java.util.zip.ZipOutputStream;
  * began flagging the app).
  */
 final class Reports {
-    /** Where testers file issues; null until FF9Recomp has a public repository. */
-    static final String ISSUES = null;
+    /** Where testers file issues (the repository the updater uses). */
+    static final String ISSUES = "https://github.com/" + Updater.REPO + "/issues/new";
     private static final long MAX_LOG = 16L << 20;
     static final String JAVA_CRASH = "java-crash.txt";
 
