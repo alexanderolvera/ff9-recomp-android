@@ -484,7 +484,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 // resume a save state, or Settings > Start: Continue (Memoria loads its autosave at once)
                 boolean autoload = getIntent().getBooleanExtra("autoload", false)
                         || getSharedPreferences("launcher", MODE_PRIVATE).getInt("start", 0) == 1;
-                if (autoload && SaveStates.autosave(this).isFile()) Os.setenv("FF9_ARGS", "-memoria-autoload", true);
+                if (autoload && SaveStates.autosave(this).isFile()) Os.setenv("FF9_AUTOLOAD", "1", true);   // loaded from the title (engine Core/TestLoad.cs)
                 String testLoad = getIntent().getStringExtra("test_load");
                 if (testLoad != null && testLoad.matches("\\d+:\\d+")) Os.setenv("FF9_LOAD_FILE", "900:" + testLoad, true);
                 String testArgs = getIntent().getStringExtra("test_args");

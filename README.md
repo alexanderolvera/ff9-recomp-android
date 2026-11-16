@@ -149,8 +149,6 @@ then open an issue here with what happened.
 
 - **M4 (playable) is still in progress.** The opening, Alexandria, fields, battles and the world
   map play on the Thor, but not every area has been played through.
-- Save states' **Play from here** currently stops at a black title screen; loading the same
-  place from the game's own saves works.
 - The battle results screen is clipped at the left in widescreen.
 - Download from Steam and Steam achievements have not been tested with a Steam copy of the game
   yet. Importing a GOG copy works.

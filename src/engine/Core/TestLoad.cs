@@ -15,7 +15,23 @@ public static class TestLoad {
 
     static Type T(string n) => typeof(FF9StateSystem).Assembly.GetType(n)!;
 
+    // FF9_AUTOLOAD=1 (the launcher's "Play from here" and Start: Continue): Memoria's autosave,
+    // loaded from the title screen once it is up. Memoria's own -memoria-autoload loads it while
+    // the title skips its intro, then waits for a fade that the skip has taken over, so the
+    // screen stayed black.
+    static readonly bool autoload = Environment.GetEnvironmentVariable("FF9_AUTOLOAD") == "1";
+    static bool autoloadDone;
+    static long titleSince = -1;
+
     public static void Tick() {
+        if (autoload && !autoloadDone) {
+            if (Player.LastSceneLoaded != "Title") titleSince = -1;
+            else if (titleSince < 0) titleSince = Clock.Frame;
+            else if (Clock.Frame - titleSince >= 120) {
+                autoloadDone = true;
+                try { LoadAutosaveNow(); } catch (Exception e) { Log.Warn("autoload failed: " + e); }
+            }
+        }
         if (spec == null || done) return;
         var p = spec.Split(':');
         if (p.Length < 3 || !int.TryParse(p[0], out int at) || Clock.Frame < at) return;

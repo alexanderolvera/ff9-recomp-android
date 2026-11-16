@@ -15,7 +15,7 @@ import java.nio.file.Files;
  * Save states for FF9 (FF7Recomp's idea, a different mechanism): Memoria saves the game each
  * time the party enters a new place (its autosave). A slot keeps a copy of that autosave and the
  * place's name; resuming a slot puts the copy back and starts the game with Memoria's
- * -memoria-autoload, which loads it straight away. So a slot resumes at the start of the place
+ * FF9_AUTOLOAD, which loads it from the title screen. So a slot resumes at the start of the place
  * the party was in, not at the exact moment (Mono's memory cannot be snapshotted the way FF7's
  * can). In game: Select+R1 keeps the current place in the next slot.
  */
@@ -58,7 +58,7 @@ final class SaveStates {
         return slot;
     }
 
-    /** Puts a slot back as Memoria's autosave (the game then starts with -memoria-autoload). */
+    /** Puts a slot back as Memoria's autosave (the game then loads it from the title: FF9_AUTOLOAD). */
     static void restore(Context c, int slot) throws IOException {
         File to = autosave(c);
         to.getParentFile().mkdirs();
