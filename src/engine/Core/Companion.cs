@@ -62,6 +62,8 @@ public static class Companion {
         return t;
     }
 
+    static bool lastCine;
+
     static object? Get(object? o, string name) {
         if (o == null) return null;
         var t = o as Type ?? o.GetType();
@@ -429,6 +431,16 @@ public static class Companion {
             // "played": set while a movie (FMV or a field's movie background) runs, cleared at Stop
             cine = mbg != null && Get(mbg, "played") is true && mode != 2;
         } catch { }
+        // or a field or world map scene that has taken the player's control (an event, a talk):
+        // the game's own HUD is up (not a menu) and its player control is off
+        if (!cine && ready && mode != 2) {
+            try {
+                var ui = Get(typeof(PersistenSingleton<>).MakeGenericType(T("UIManager")!), "Instance");
+                string? st = Get(ui, "State")?.ToString();
+                cine = st is "FieldHUD" or "WorldHUD" && Get(ui, "IsPlayerControlEnable") is false;
+            } catch { }
+        }
+        if (cine != lastCine) { lastCine = cine; Log.Info($"panels: {(cine ? "dim (no control)" : "lit (control)")}"); }
         b.Append(",\"cine\":").Append(cine ? 1 : 0);
         // boosters and play time (the panels' buttons and header)
         try {
