@@ -269,3 +269,15 @@ been up for 300 frames (0-based, as FF9_LOAD_FILE), for tests that need a save i
 Game files > Saves: Import takes several files or zips at once (SavedData_ww.dat with Memoria's
 SavedData_ww_Memoria_*.dat and ExtraSave_N/), putting the current ones in backup-<time>/;
 Export writes them all into one zip.
+
+## NGUI clipping (0.1.6, issue 12)
+
+Clipped NGUI panels (dialogs, scroll lists) were drawn unclipped. Two causes: Shader.name gave the
+asset's name ("Unlit - Transparent Colored") instead of the ShaderLab name ("Unlit/Transparent
+Colored"), so UIDrawCall.CreateMaterial looked for "Hidden/Unlit - Transparent Colored 2", found
+nothing in Memoria's ShadersLoader (StreamingAssets/Shaders/Hidden/Unlit/*.txt) and kept the plain
+shader; and renderers' scripts never got OnWillRenderObject, where UIDrawCall sets _ClipRange/
+_ClipArgs (with the right shader and no values, panels vanished). Object.name now returns the
+ShaderLab name for shaders, and the pipeline calls OnWillRenderObject on the visible renderers'
+scripts before gathering draws. A closing dialog's text now shrinks with its box.
+FF9_TEST_DRAWCALLS=1 logs NGUI's draw calls (panel, shader, clip count, clip vectors) as they change.

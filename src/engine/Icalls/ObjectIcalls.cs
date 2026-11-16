@@ -15,7 +15,14 @@ namespace FF9Engine.Icalls;
 
 static class ObjectIcalls {
     [Icall("UnityEngine.Object::get_name")]
-    static string GetName(UObject self) => Registry.Of<NObject>(self).Name;
+    static string GetName(UObject self) => Registry.Of<NObject>(self) switch {
+        // a shader's name is its ShaderLab name ("Unlit/Transparent Colored"), not the asset's
+        // ("Unlit - Transparent Colored"): NGUI makes the clipped shader's name from it
+        // ("Hidden/Unlit/Transparent Colored 2"); with the asset's it found none and drew
+        // clipped panels unclipped (a dialog's text outlived its shrinking box: issue 12)
+        Assets.NAsset { Data: Gfx.NShader { Name.Length: > 0 } s } => s.Name,
+        var o => o.Name,
+    };
 
     [Icall("UnityEngine.Object::set_name")]
     static void SetName(UObject self, string v) {

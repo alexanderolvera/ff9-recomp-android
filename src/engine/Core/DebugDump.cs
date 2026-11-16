@@ -226,7 +226,35 @@ public static class DebugDump {
         } catch (Exception e) { Log.Info("save ui probe: " + e.Message); }
     }
 
+    static readonly bool drawCallProbe = Environment.GetEnvironmentVariable("FF9_TEST_DRAWCALLS") != null;
+    static string lastDrawCalls = "";
+
+    /// FF9_TEST_DRAWCALLS=1: NGUI's draw calls (panel, clipping, shader, clip count, material's
+    /// clip range), when they change.
+    static void DrawCalls() {
+        const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+        try {
+            var t = typeof(FF9StateSystem).Assembly.GetType("UIDrawCall")!;
+            var list = t.GetField("mActiveList", F)!.GetValue(null)!;
+            int n = (int)list.GetType().GetField("size")!.GetValue(list)!;
+            var arr = (Array)list.GetType().GetField("buffer")!.GetValue(list)!;
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < n; i++) {
+                var dc = arr.GetValue(i)!;
+                var panel = t.GetField("panel", F)!.GetValue(dc) as UnityEngine.Component;
+                var mat = t.GetField("mDynamicMat", F)!.GetValue(dc) as UnityEngine.Material;
+                var tex = t.GetField("mTexture", F)!.GetValue(dc) as UnityEngine.Texture;
+                object? clipping = panel?.GetType().GetProperty("clipping", F)?.GetValue(panel);
+                string cr = mat == null ? "-" : $"{mat.GetVector("_ClipRange0")} args0={mat.GetVector("_ClipArgs0")} r1={mat.GetVector("_ClipRange1")} a1={mat.GetVector("_ClipArgs1")} r2={mat.GetVector("_ClipRange2")} a2={mat.GetVector("_ClipArgs2")}";
+                sb.Append($"\n  dc{i} panel={panel?.name}({clipping}) shader={mat?.shader?.name} clips={t.GetField("mClipCount", F)!.GetValue(dc)} tex={tex?.name} clip0={cr} tris={t.GetField("mTriangles", F)!.GetValue(dc)}");
+            }
+            string s = sb.ToString();
+            if (s != lastDrawCalls) { lastDrawCalls = s; Log.Info($"draw calls at frame {Clock.Frame}:" + s); }
+        } catch (Exception e) { Log.Info("draw call probe: " + e.Message); }
+    }
+
     public static void Tick() {
+        if (drawCallProbe) DrawCalls();
         if (saveUiProbe && Clock.Frame % 10 == 0) SaveUi();
         if (Clock.Frame == 2) IlDump();
         if (warpWorld != null && int.TryParse(warpWorld.Split(':')[0], out int wf) && Clock.Frame == wf)

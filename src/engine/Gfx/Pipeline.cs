@@ -537,11 +537,12 @@ public static class Pipeline {
         SendToCamera(cam, "OnPreRender");
 
         long g0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        NTransform.CacheEpoch = ++epoch == 0 ? ++epoch : epoch;   // no script runs until the sort is done
-        var items = new List<DrawItem>();
-        int seq = 0;
         var viewProj = M.Mul(Proj, View);
         RendererComponents.All.RemoveAll(r => r.Managed == null || Registry.Get(r.Managed) != r);
+        // the renderers this camera sees, then their scripts' OnWillRenderObject, as Unity calls it
+        // before drawing them: NGUI's UIDrawCall sets a clipped panel's clip range and softness
+        // there (without it the clip shaders got zeros and drew nothing)
+        var visible = new List<(NRenderer r, NMesh mesh, Matrix4x4 model)>();
         foreach (var r in RendererComponents.All) {
             r.IsVisible = false;
             if (!r.Enabled || r.IsAsset || !r.GameObject.ActiveInHierarchy) continue;
@@ -554,6 +555,16 @@ public static class Pipeline {
             var model = r.DrawMatrix;
             if (r is NMeshRenderer && !NoCull && Outside(mesh, model, viewProj)) { culled++; continue; }
             r.IsVisible = true;
+            visible.Add((r, mesh, model));
+        }
+        foreach (var (r, _, _) in visible)
+            foreach (var comp in r.GameObject.Components)
+                if (comp is NMonoBehaviour mb && mb.Enabled && mb.Managed != null && mb.Methods?.OnWillRenderObject is { } will)
+                    ScriptMethods.Call(mb, will);
+        NTransform.CacheEpoch = ++epoch == 0 ? ++epoch : epoch;   // no script runs until the sort is done
+        var items = new List<DrawItem>();
+        int seq = 0;
+        foreach (var (r, mesh, model) in visible) {
             var pos = r.GameObject.Transform.Position;
             var vpos = M.MulPoint(View, pos);
             for (int i = 0; i < Math.Max(r.Materials.Length, 1); i++) {
