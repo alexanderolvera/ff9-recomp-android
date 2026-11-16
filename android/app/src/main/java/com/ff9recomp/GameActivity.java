@@ -286,6 +286,10 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                     lastFrames = f;
                     lastFpsAt = now;
                 }
+                // a text field selected (a character's name): Android's keyboard when there is no controller
+                String text = nativeTextRequest();
+                if (text != null && (touchMode == 1 || !gamepadConnected())) showTextDialog(text);
+                if (textDialog != null && !nativeTextOpen()) { textDialog.dismiss(); textDialog = null; }
                 if (rumble != 0) {
                     int r = nativeRumble();
                     // a level held by the game is renewed in slices; zero stops it
@@ -295,6 +299,46 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
             ui.postDelayed(this, 50);
         }
     };
+
+    // ---- text fields (issue 6): the game's naming screen expects a PC keyboard
+    static native String nativeTextRequest();
+    static native boolean nativeTextOpen();
+    static native void nativeTextReply(String text);
+    private android.app.AlertDialog textDialog;
+
+    /** Android's keyboard for the game's selected text field. OK puts the text in the field and the
+     *  next Confirm accepts it; Cancel keeps what was there (Cancel in the game opens this again). */
+    private void showTextDialog(String current) {
+        if (textDialog != null) textDialog.dismiss();
+        android.widget.EditText e = new android.widget.EditText(this);
+        e.setSingleLine(true);
+        e.setText(current);
+        e.setSelection(current.length());
+        e.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(12) });
+        e.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(e);
+        android.app.AlertDialog d = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Name")
+                .setView(box)
+                .setPositiveButton("OK", (x, w) -> nativeTextReply(e.getText().toString()))
+                .setNegativeButton("Cancel", (x, w) -> nativeTextReply(current))
+                .setOnCancelListener(x -> nativeTextReply(current))
+                .create();
+        e.setOnEditorActionListener((v, action, ev) -> {
+            if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+            nativeTextReply(e.getText().toString());
+            d.dismiss();
+            return true;
+        });
+        d.setOnDismissListener(x -> { if (textDialog == d) textDialog = null; hideSystemUi(); });
+        d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        textDialog = d;
+        d.show();
+        e.requestFocus();
+    }
 
     /** The game's rumble on the controller's motor when it has one, else the device's. */
     private void vibrate(int strength) {

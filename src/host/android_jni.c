@@ -117,6 +117,25 @@ JNIEXPORT jstring JNICALL Java_com_ff9recomp_GameActivity_nativeCompanion(JNIEnv
     return r;
 }
 
+/* the game's text fields (ff9host.c ff9_text_*): a new request's text or null, whether a field is
+   still selected, and the text typed in the APK's dialog */
+char *ff9_text_poll(void);
+int ff9_text_is_open(void);
+void ff9_text_reply(const char *s);
+JNIEXPORT jstring JNICALL Java_com_ff9recomp_GameActivity_nativeTextRequest(JNIEnv *env, jclass cls) {
+    char *c = ff9_text_poll();
+    if (!c) return NULL;
+    jstring r = (*env)->NewStringUTF(env, c);
+    free(c);
+    return r;
+}
+JNIEXPORT jboolean JNICALL Java_com_ff9recomp_GameActivity_nativeTextOpen(JNIEnv *env, jclass cls) { return ff9_text_is_open() ? JNI_TRUE : JNI_FALSE; }
+JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativeTextReply(JNIEnv *env, jclass cls, jstring s) {
+    const char *u = (*env)->GetStringUTFChars(env, s, NULL);
+    ff9_text_reply(u);
+    (*env)->ReleaseStringUTFChars(env, s, u);
+}
+
 JNIEXPORT void JNICALL Java_com_ff9recomp_GameActivity_nativePad(JNIEnv *env, jclass cls, jint buttons, jint lt, jint rt, jint lx, jint ly, jint rx, jint ry) {
     static int last = -1;
     if (buttons != last) { __android_log_print(ANDROID_LOG_INFO, "FF9", "pad buttons %04x", buttons); last = buttons; }

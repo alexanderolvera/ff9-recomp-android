@@ -153,6 +153,8 @@ public static class Player {
         Companion.Tick();
         UiSounds.Tick();
         TestLoad.Tick();
+        TextInput.Tick();
+        Widescreen.Tick();
         if (memEvery > 0 && Clock.Frame % memEvery == 0) MemStat();
         Destroyer.Flush();
         while (levelRequests.Count > 0) {

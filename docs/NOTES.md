@@ -43,6 +43,15 @@
   (+FF9_INSPECT=Types or FF9_INSPECT_GO=Name_With_Underscores), FF9_TRACE_FIELDS=Type,
   FF9_DUMP_TREE=classId, FF9_DUMP_GLSL, FF9_SKIP_SHADER, FF9_ONLY_Q/FF9_SKIP_Q, FF9_DUMP_TEX,
   FF9_TRACE_MESHCOL, FF9_STOP_ON_EXCEPTION.
+- Text fields (issue 6, Core/TextInput.cs): Input.inputString is empty here, so a selected UIInput
+  (the naming screen) posts its text to the host and GameActivity shows Android's keyboard in a
+  dialog when no controller is connected (or touch controls are forced on); the reply goes in
+  through UIInput.value. Controller: Confirm twice keeps the default, Menu resets it.
+  FF9_TEST_NAMING=character opens the naming screen in a field.
+- Battles after a narrow field camera (issue 5, Core/Widescreen.cs): PSXCameraAspect applies
+  NarrowMapList.RestrictedCams by fldMapNo and the old FieldMap's camIdx, which still name the field
+  in a battle (Prima Vista cargo room, map 50 camera 1, before the first battle): camIdx is cleared
+  in battles and on the world map. To test: New Game, the candle, the naming screen, first battle.
 - Memoria's own log (game/Memoria.log on the device) explains most startup failures.
 - Gotchas found: serialized 1/2-byte script fields align to 4 except inside arrays; format-15
   objects' type ID is the class ID (match type trees by it); AnimationCurve wrap modes are

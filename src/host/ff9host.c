@@ -332,6 +332,58 @@ char *ff9_companion_get(void) {
     return c;
 }
 
+/* the game's text fields (FF9Engine Core/TextInput.cs, issue 6): while a field such as a character's
+   name is selected, the engine posts its text (ff9_text_open); the APK shows Android's keyboard in a
+   dialog (GameActivity) and hands the typed text back (ff9_text_reply), which the engine takes */
+static pthread_mutex_t text_lock = PTHREAD_MUTEX_INITIALIZER;
+static char *text_request, *text_reply;
+static int text_open;
+__attribute__((visibility("default"))) void ff9_text_open(const char *current) {
+    char *c = strdup(current ? current : "");
+    pthread_mutex_lock(&text_lock);
+    free(text_request);
+    text_request = c;
+    text_open = 1;
+    pthread_mutex_unlock(&text_lock);
+}
+__attribute__((visibility("default"))) void ff9_text_close(void) {
+    pthread_mutex_lock(&text_lock);
+    free(text_request);
+    text_request = NULL;
+    text_open = 0;
+    pthread_mutex_unlock(&text_lock);
+}
+/* the engine: the typed text (UTF-8, not terminated) and its length, or -1 when none came */
+__attribute__((visibility("default"))) int ff9_text_take(char *buf, int size) {
+    int n = -1;
+    pthread_mutex_lock(&text_lock);
+    if (text_reply) {
+        n = (int)strlen(text_reply);
+        if (n > size) n = size;
+        memcpy(buf, text_reply, (size_t)n);
+        free(text_reply);
+        text_reply = NULL;
+    }
+    pthread_mutex_unlock(&text_lock);
+    return n;
+}
+/* the APK: a new request's text (the caller frees it), or NULL */
+char *ff9_text_poll(void) {
+    pthread_mutex_lock(&text_lock);
+    char *r = text_request;
+    text_request = NULL;
+    pthread_mutex_unlock(&text_lock);
+    return r;
+}
+int ff9_text_is_open(void) { return text_open; }
+void ff9_text_reply(const char *s) {
+    char *c = strdup(s ? s : "");
+    pthread_mutex_lock(&text_lock);
+    free(text_reply);
+    text_reply = c;
+    pthread_mutex_unlock(&text_lock);
+}
+
 #ifndef FF9_LIBRARY
 /* headless host: the window never changes (src/host/android_jni.c has the APK's versions) */
 __attribute__((visibility("default"))) int ff9_window_gen(void) { return 0; }
