@@ -26,6 +26,7 @@ public sealed class CoroutineState {
     public object? Wait;
     public float WaitUntil;
     public bool Done;
+    public long Seq;        // when it last yielded: coroutines resume in that order, as Unity's do
     public Coroutine? Handle;
     public string? Name;
     public readonly List<CoroutineState> Waiters = new();
@@ -35,6 +36,7 @@ public static class Coroutines {
     static readonly List<CoroutineState> active = new();
     static readonly Dictionary<int, CoroutineState> byId = new();
     static int nextId = 1;
+    static long yieldSeq;
 
     public static Coroutine Start(NMonoBehaviour owner, IEnumerator e) {
         var c = new CoroutineState { Id = nextId++, Owner = owner, Root = e };
@@ -79,10 +81,12 @@ public static class Coroutines {
                     c.Stack.Push(nested);
                     continue;
                 case WaitForSeconds w:
+                    c.Seq = ++yieldSeq;
                     c.Wait = w;
                     c.WaitUntil = Clock.Now + Unsafe.As<FloatLayout>(w).Value;
                     return;
                 default:
+                    c.Seq = ++yieldSeq;
                     c.Wait = y;     // null, WaitForEndOfFrame, WaitForFixedUpdate, Coroutine, AsyncOperation, WWW...
                     return;
             }
@@ -111,8 +115,15 @@ public static class Coroutines {
 
     public static void Run(Phase phase) {
         int n = active.Count;       // coroutines started during this pass wait for the next one
+        // in the order they yielded, not the order they started: HonoFading's FadePingPong starts
+        // a fade whose WaitForAnimation yields before the ping-pong does; both come due in the
+        // same frame, and the ping-pong's FadeOut ran first, found the fade busy and dropped its
+        // callback, so the Save/Load screen stayed "loading" and ignored every button (a slot's
+        // files opened, then nothing worked: issue 10, Reddit)
+        var order = active.GetRange(0, n);
+        order.Sort((a, b) => a.Seq.CompareTo(b.Seq));
         for (int i = 0; i < n; i++) {
-            var c = active[i];
+            var c = order[i];
             if (c.Done) continue;
             if (c.Owner.Managed is null || Registry.Get(c.Owner.Managed) == null) {
                 Log.Once("codead:" + c.Owner.Managed?.GetType().Name, $"coroutine of a destroyed {c.Owner.Managed?.GetType().Name} dropped");

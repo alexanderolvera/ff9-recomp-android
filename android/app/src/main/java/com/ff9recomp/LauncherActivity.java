@@ -45,7 +45,7 @@ import java.util.Map;
  * confirms, B goes back to the commands.
  */
 public class LauncherActivity extends Activity {
-    private static final int PICK_GAME = 1, PICK_SAVE = 2;
+    private static final int PICK_GAME = 1, PICK_SAVE = 2, EXPORT_SAVES = 3;
     private static final int BG = Color.rgb(8, 9, 14), TEXT = 0xFFF2EEE2, DIM = 0xFFAEB0BC, ACCENT = 0xFFE8C66A;
     private static final int WIN_TOP = 0xFF5E6478, WIN_BOTTOM = 0xFF22252F, HOT_TOP = 0xFF8A8466, HOT_BOTTOM = 0xFF3E3A2A,
             BTN_TOP = 0xFF4A4F60, BTN_BOTTOM = 0xFF262935, BORDER = 0xFFDCD6C4, INNER = 0xFF3A3F50;
@@ -1275,9 +1275,14 @@ public class LauncherActivity extends Activity {
         TextView hs = heading("Saves");
         hs.setPadding(0, dp(14), 0, dp(4));
         col.addView(hs);
-        col.addView(note("Bring your PC saves: pick SavedData_ww.dat from the PC (in AppData/LocalLow/SquareEnix/FINAL FANTASY IX/Steam/EncryptedSavedData). The saves here are kept as a backup first."));
+        col.addView(note("Bring your PC saves: in the PC's AppData/LocalLow/SquareEnix/FINAL FANTASY IX/Steam/EncryptedSavedData, pick all the files at once "
+                + "(SavedData_ww.dat and Memoria's SavedData_ww_Memoria_... files), or a zip of them. The saves here are put aside as a backup first. "
+                + "Export puts every save here in one zip, to keep, or to bring back later with Import."));
         ViewGroup sv = buttons();
-        sv.addView(button("Import a PC save", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), PICK_SAVE)));
+        sv.addView(button("Import saves", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), PICK_SAVE)));
+        sv.addView(button("Export saves", v -> startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip")
+                .putExtra(Intent.EXTRA_TITLE, "FF9Recomp-saves-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".zip"), EXPORT_SAVES)));
         col.addView(sv);
 
         TextView h = heading("Storage");
@@ -1565,7 +1570,14 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req == PICK_SAVE && res == RESULT_OK && data != null) { importSave(data.getData()); return; }
+        if (req == PICK_SAVE && res == RESULT_OK && data != null) {
+            java.util.List<Uri> uris = new java.util.ArrayList<>();
+            if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+            else if (data.getData() != null) uris.add(data.getData());
+            importSaves(uris);
+            return;
+        }
+        if (req == EXPORT_SAVES && res == RESULT_OK && data != null) { exportSaves(data.getData()); return; }
         if (req != PICK_GAME || res != RESULT_OK || data == null) return;
         Uri tree = data.getData();
         // kept, so an import that was paused (or stopped by Android) can read the folder again later
@@ -1574,25 +1586,95 @@ public class LauncherActivity extends Activity {
         startJob(JobService.IMPORT, tree.toString());
     }
 
-    /** A PC save file (SavedData_ww.dat, the Steam release's: the same format the game uses here). */
-    private void importSave(Uri uri) {
+    /** Saves as the game keeps them in persistent/Steam/EncryptedSavedData (the PC's files as they
+     *  are): SavedData_ww.dat, Memoria's SavedData_ww_Memoria_*.dat, and ExtraSave_N/ (Memoria's
+     *  pages). Several files, or zips of them, at once. The current ones go into backup-<time>/ first. */
+    private void importSaves(java.util.List<Uri> uris) {
         if (TestControl.gamePid(this) > 0) { status.setText("Leave the game first (Select+Start)."); return; }
         try {
-            byte[] b;
-            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) { b = in.readAllBytes(); }
-            if (b.length < 100_000) throw new java.io.IOException("this is not FF9's save file (SavedData_ww.dat is a few megabytes)");
+            java.util.Map<String, byte[]> files = new java.util.LinkedHashMap<>();
+            for (Uri u : uris) {
+                String name = displayName(u);
+                try (java.io.InputStream in = getContentResolver().openInputStream(u)) {
+                    if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) {
+                        java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in);
+                        for (java.util.zip.ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                            String p = savePath(e.getName());
+                            if (!e.isDirectory() && p != null) files.put(p, z.readAllBytes());
+                        }
+                    } else {
+                        String p = savePath(name);
+                        if (p == null) throw new java.io.IOException(name + " is not one of FF9's save files (SavedData_....dat)");
+                        files.put(p, in.readAllBytes());
+                    }
+                }
+            }
+            boolean main = false;
+            for (String p : files.keySet()) if (p.matches("(ExtraSave_\\d+/)?SavedData_[a-z]{2}\\.dat")) main = true;
+            if (!main) throw new java.io.IOException("SavedData_ww.dat is not among them (the file with the saves themselves)");
             File dir = Reports.savesDir(this);
             dir.mkdirs();
-            File cur = new File(dir, "SavedData_ww.dat");
-            if (cur.isFile()) {
-                String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date());
-                if (!cur.renameTo(new File(dir, "SavedData_ww.dat.before-import-" + stamp))) throw new java.io.IOException("cannot keep the current saves");
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+            File backup = new File(dir, "backup-" + stamp);
+            File[] cur = dir.listFiles();
+            if (cur != null) for (File f : cur) {
+                if (!f.getName().startsWith("SavedData_") && !f.getName().startsWith("ExtraSave_")) continue;
+                backup.mkdirs();
+                if (!f.renameTo(new File(backup, f.getName()))) throw new java.io.IOException("cannot put " + f.getName() + " aside");
             }
-            java.nio.file.Files.write(cur.toPath(), b);
-            status.setText("PC saves imported: Load Game on the title screen shows them. Your earlier saves are kept beside them as a backup.");
+            for (java.util.Map.Entry<String, byte[]> e : files.entrySet()) {
+                File out = new File(dir, e.getKey());
+                out.getParentFile().mkdirs();
+                java.nio.file.Files.write(out.toPath(), e.getValue());
+            }
+            status.setText(files.size() + " save file" + (files.size() == 1 ? "" : "s") + " imported: Load Game on the title screen shows them."
+                    + (backup.isDirectory() ? " The earlier ones are kept in the saves folder's " + backup.getName() + "." : ""));
         } catch (Exception e) {
             status.setText("Save import failed: " + e.getMessage());
         }
+    }
+
+    /** A save file's place in the saves folder, or null: SavedData_*.dat, at the top or in ExtraSave_N/. */
+    private static String savePath(String name) {
+        String[] parts = name.replace('\\', '/').split("/");
+        String file = parts[parts.length - 1];
+        if (!file.startsWith("SavedData_") || !file.endsWith(".dat")) return null;
+        if (parts.length >= 2 && parts[parts.length - 2].matches("ExtraSave_\\d+")) return parts[parts.length - 2] + "/" + file;
+        return file;
+    }
+
+    private String displayName(Uri u) {
+        try (android.database.Cursor c = getContentResolver().query(u, new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst()) return c.getString(0);
+        } catch (Exception ignored) { }
+        String p = u.getLastPathSegment();
+        return p == null ? "" : p.substring(p.lastIndexOf('/') + 1);
+    }
+
+    /** Every save in one zip, laid out as the saves folder (the PC's EncryptedSavedData). */
+    private void exportSaves(Uri to) {
+        File dir = Reports.savesDir(this);
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(getContentResolver().openOutputStream(to))) {
+            int n = 0;
+            File[] top = dir.listFiles();
+            if (top != null) for (File f : top) {
+                if (f.isFile() && savePath(f.getName()) != null) { zipFile(z, f, f.getName()); n++; }
+                else if (f.isDirectory() && f.getName().matches("ExtraSave_\\d+")) {
+                    File[] in = f.listFiles();
+                    if (in != null) for (File g : in) if (g.isFile() && savePath(g.getName()) != null) { zipFile(z, g, f.getName() + "/" + g.getName()); n++; }
+                }
+            }
+            z.finish();
+            status.setText(n == 0 ? "No saves to export yet." : n + " save file" + (n == 1 ? "" : "s") + " exported.");
+        } catch (Exception e) {
+            status.setText("Save export failed: " + e.getMessage());
+        }
+    }
+
+    private static void zipFile(java.util.zip.ZipOutputStream z, File f, String name) throws java.io.IOException {
+        z.putNextEntry(new java.util.zip.ZipEntry(name));
+        z.write(java.nio.file.Files.readAllBytes(f.toPath()));
+        z.closeEntry();
     }
 
     // ------------------------------------------------------------------ keys

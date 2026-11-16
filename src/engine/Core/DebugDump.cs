@@ -220,6 +220,8 @@ public static class DebugDump {
             string s = scene == null ? "no scene" : $"active={((UnityEngine.Behaviour)scene).isActiveAndEnabled} loading={asm.GetType("UIScene")!.GetField("isLoading", F)!.GetValue(scene)} group={group} button={btn?.name}";
             var prev = scene?.GetType().GetField("LoadingPreviewDialog", F)?.GetValue(scene) as UnityEngine.GameObject;
             s += $" previewDialog={prev?.activeSelf} uiState={ui.GetType().GetProperty("State", F)?.GetValue(ui)}";
+            if (scene != null && asm.GetType("UIScene")!.GetProperty("FadingComponent", F)?.GetValue(scene) is UnityEngine.Component fade)
+                s += $" fade: active={fade.gameObject.activeInHierarchy} busy={fade.GetType().GetField("busy", F)?.GetValue(fade)}";
             if (s != lastSaveUi) { lastSaveUi = s; Log.Info("save ui: " + s); }
         } catch (Exception e) { Log.Info("save ui probe: " + e.Message); }
     }

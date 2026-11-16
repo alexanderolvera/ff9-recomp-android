@@ -23,7 +23,35 @@ public static class TestLoad {
     static bool autoloadDone;
     static long titleSince = -1;
 
+    // FF9_TEST_SAVE=slot:file (tests): once a field has been up for 300 frames, saves the game there,
+    // as a moogle's Save does (FF9StateSystem.Serializer.Save). 0-based, as FF9_LOAD_FILE.
+    static readonly string? saveSpec = Environment.GetEnvironmentVariable("FF9_TEST_SAVE");
+    static bool saveDone;
+    static long fieldSince = -1;
+
+    static void TestSave() {
+        if (saveSpec == null || saveDone) return;
+        if (Player.LastSceneLoaded != "FieldMap") { fieldSince = -1; return; }
+        if (fieldSince < 0) { fieldSince = Clock.Frame; return; }
+        if (Clock.Frame - fieldSince < 300) return;
+        saveDone = true;
+        var p = saveSpec.Split(':');
+        int slot = int.Parse(p[0]), file = int.Parse(p[1]);
+        try {
+            object ser = typeof(FF9StateSystem).GetProperty("Serializer", F)!.GetValue(null)!;
+            var save = Array.Find(ser.GetType().GetMethods(F), m => m.Name == "Save" && m.GetParameters().Length == 4)!;
+            var finishType = save.GetParameters()[3].ParameterType;
+            var ps = Array.ConvertAll(finishType.GetMethod("Invoke")!.GetParameters(), q => Expression.Parameter(q.ParameterType, q.Name));
+            var call = Expression.Call(typeof(TestLoad).GetMethod(nameof(Saved), F)!, Expression.Convert(ps[0], typeof(object)), ps[3]);
+            save.Invoke(ser, new object?[] { slot, file, null, Expression.Lambda(finishType, call, ps).Compile() });
+            Log.Info($"test save: slot {slot} file {file}");
+        } catch (Exception e) { Log.Warn("test save failed: " + e); }
+    }
+
+    static void Saved(object err, bool ok) => Log.Info($"test save finished: {err} ok={ok}");
+
     public static void Tick() {
+        TestSave();
         if (autoload && !autoloadDone) {
             if (Player.LastSceneLoaded != "Title") titleSince = -1;
             else if (titleSince < 0) titleSince = Clock.Frame;

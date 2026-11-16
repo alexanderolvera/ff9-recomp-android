@@ -255,3 +255,17 @@
   inactive or destroyed are logged once (TODO lines).
 - The Thor's SavedData_ww.dat currently has no saves in slots 1-2 (test_load 1:2 gives ok=False;
   the Load screen shows nothing for those slots): load from Continue (the autosave) instead.
+
+## Load Game froze on a slot's file list (0.1.5, issue 10, Reddit)
+
+SaveLoadUI shows a slot's files inside HonoFading.FadePingPong: FadeIn starts WaitForAnimation
+(WaitForSeconds d), then PingPongProcess yields WaitForSeconds d+0.01 and calls FadeOut, which
+does nothing while the fade is `busy`. Both came due in the same frame, and coroutines resumed in
+the order they started, so FadeOut ran before WaitForAnimation cleared `busy`: its callback (the
+one that ends Loading) was dropped and the screen ignored every button. Coroutines now resume in
+the order they yielded, as Unity's do. FF9_TEST_SAVE=slot:file saves the game once a field has
+been up for 300 frames (0-based, as FF9_LOAD_FILE), for tests that need a save in a slot.
+
+Game files > Saves: Import takes several files or zips at once (SavedData_ww.dat with Memoria's
+SavedData_ww_Memoria_*.dat and ExtraSave_N/), putting the current ones in backup-<time>/;
+Export writes them all into one zip.
