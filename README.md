@@ -177,7 +177,7 @@ milestones.
 
 ## Credits and licenses
 
-FF9Recomp builds on:
+FF9Recomp is licensed under the [GPL-3.0](LICENSE). It builds on:
 [Memoria](https://github.com/Albeoris/Memoria) (MIT; installed from its own releases, not shipped),
 Moguri Mod and the authors of every mod in Memoria's catalog (downloaded from their own links),
 [.NET runtime and Mono](https://github.com/dotnet/runtime) (MIT),
