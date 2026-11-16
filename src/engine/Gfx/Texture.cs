@@ -46,15 +46,26 @@ public class NTexture : NObject {
         if (dumpTex != null && Pixels != null && (Name.Contains(dumpTex) || dumpTex == "#" + Id))
             Png.Write($"/data/local/tmp/ff9/shots/tex_{Id}_{Name.Replace('/', '_')}_{Format}.png", Pixels, Width, Height, flipY: true);
         if (GlTex == 0) GlTex = GL.GenTexture();
+        Textures.NoteSize(this);
         Core.GpuStats.TexUploads++; Core.GpuStats.LastTex = Name;
         GL.glBindTexture(GL.TEXTURE_2D, GlTex);
         GL.glPixelStorei(GL.UNPACK_ALIGNMENT, 1);
-        if (Pixels != null) fixed (byte* p = Pixels) GL.glTexImage2D(GL.TEXTURE_2D, 0, (int)GL.RGBA8, Width, Height, 0, GL.RGBA, GL.UNSIGNED_BYTE, p);
+        int max = Textures.MaxSize;
+        bool shrunk = false;
+        if (Pixels != null && (Width > max || Height > max)) {
+            // bigger than this GPU takes (GLES 3 promises only 2048; Mali and PowerVR often stop at
+            // 4096 or 8192, Adreno at 16384): a halved copy, same UVs, instead of no texture at all
+            var (sp, sw, sh) = Textures.Shrink(Pixels, Width, Height, max);
+            Log.Once("bigtex" + Id, $"texture '{Name}' {Width}x{Height} is over the GPU's {max}: uploaded at {sw}x{sh}");
+            fixed (byte* p = sp) GL.glTexImage2D(GL.TEXTURE_2D, 0, (int)GL.RGBA8, sw, sh, 0, GL.RGBA, GL.UNSIGNED_BYTE, p);
+            shrunk = true;
+        }
+        else if (Pixels != null) fixed (byte* p = Pixels) GL.glTexImage2D(GL.TEXTURE_2D, 0, (int)GL.RGBA8, Width, Height, 0, GL.RGBA, GL.UNSIGNED_BYTE, p);
         else GL.glTexImage2D(GL.TEXTURE_2D, 0, (int)GL.RGBA8, Math.Max(1, Width), Math.Max(1, Height), 0, GL.RGBA, GL.UNSIGNED_BYTE, null);
         if (MipCount > 1) GL.glGenerateMipmap(GL.TEXTURE_2D);
         ApplySampler();
         Dirty = false;
-        if (!Readable) Pixels = null;
+        if (!Readable && !shrunk) Pixels = null;      // a shrunk copy cannot be read back at full size
     }
 
     public void ApplySampler() {
@@ -76,6 +87,50 @@ public class NTexture : NObject {
 
 public static class Textures {
     static NTexture? white, black;
+
+    static int maxSize, largest = 2048;
+
+    /// GL_MAX_TEXTURE_SIZE, or less with FF9_TEST_MAX_TEXTURE (files/env.txt) to try the
+    /// shrinking on a GPU that has room (the Thor's Adreno takes 16384).
+    public static unsafe int MaxSize {
+        get {
+            if (maxSize > 0) return maxSize;
+            int v = 0;
+            GL.glGetIntegerv(GL.MAX_TEXTURE_SIZE, &v);
+            if (v < 2048) v = 2048;
+            if (int.TryParse(Environment.GetEnvironmentVariable("FF9_TEST_MAX_TEXTURE"), out int t) && t >= 64 && t < v) {
+                Log.Info($"GL max texture size {v}, tested as {t} (FF9_TEST_MAX_TEXTURE)");
+                v = t;
+            } else Log.Info($"GL max texture size {v}");
+            return maxSize = v;
+        }
+    }
+
+    /// Logs each new largest texture over 2048, to learn what the game needs.
+    public static void NoteSize(NTexture t) {
+        int m = Math.Max(t.Width, t.Height);
+        if (m <= largest) return;
+        largest = m;
+        Log.Info($"largest texture so far: '{t.Name}' {t.Width}x{t.Height}");
+    }
+
+    /// Halves (2x2 average, RGBA8) until both sides fit in max.
+    public static (byte[] px, int w, int h) Shrink(byte[] px, int w, int h, int max) {
+        while (w > max || h > max) {
+            int nw = Math.Max(1, (w + 1) / 2), nh = Math.Max(1, (h + 1) / 2);
+            var o = new byte[nw * nh * 4];
+            for (int y = 0; y < nh; y++) {
+                int y0 = Math.Min(2 * y, h - 1), y1 = Math.Min(2 * y + 1, h - 1);
+                for (int x = 0; x < nw; x++) {
+                    int x0 = Math.Min(2 * x, w - 1), x1 = Math.Min(2 * x + 1, w - 1);
+                    int a = (y0 * w + x0) * 4, b = (y0 * w + x1) * 4, c = (y1 * w + x0) * 4, d = (y1 * w + x1) * 4, q = (y * nw + x) * 4;
+                    for (int k = 0; k < 4; k++) o[q + k] = (byte)((px[a + k] + px[b + k] + px[c + k] + px[d + k] + 2) >> 2);
+                }
+            }
+            px = o; w = nw; h = nh;
+        }
+        return (px, w, h);
+    }
 
     public static NTexture White => white ??= Solid("UnityWhite", 255, 255, 255, 255);
     public static NTexture Black => black ??= Solid("UnityBlack", 0, 0, 0, 0);

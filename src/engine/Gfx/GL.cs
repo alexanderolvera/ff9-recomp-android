@@ -59,6 +59,8 @@ public static unsafe class GL {
     [DllImport(L)] static extern byte* glGetString(uint name);
     public static string GetString(uint n) => Marshal.PtrToStringAnsi((IntPtr)glGetString(n)) ?? "";
 
+    [DllImport(L)] public static extern void glGetIntegerv(uint pname, int* data);
+    public const uint MAX_TEXTURE_SIZE = 0x0D33;
     [DllImport(L)] static extern void glGenTextures(int n, uint* t);
     [DllImport(L)] static extern void glDeleteTextures(int n, uint* t);
     [DllImport(L)] public static extern void glBindTexture(uint target, uint tex);

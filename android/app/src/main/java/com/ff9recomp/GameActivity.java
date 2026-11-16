@@ -407,6 +407,14 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 if (testLoad != null && testLoad.matches("\\d+:\\d+")) Os.setenv("FF9_LOAD_FILE", "900:" + testLoad, true);
                 String testArgs = getIntent().getStringExtra("test_args");
                 if (testArgs != null) Os.setenv("FF9_ARGS", testArgs.trim().replace(' ', '+'), true);
+                // adb tests: files/env.txt, one FF9_TEST_NAME=value per line (FF9_TEST_MAX_TEXTURE=4096
+                // tries the large-texture fallback on the Thor, whose GPU takes 16384)
+                File env = new File(gi.files, "env.txt");
+                if (env.isFile())
+                    for (String l : new String(java.nio.file.Files.readAllBytes(env.toPath()), java.nio.charset.StandardCharsets.UTF_8).split("\n")) {
+                        int eq = l.indexOf('=');
+                        if (eq > 0 && l.startsWith("FF9_TEST_")) Os.setenv(l.substring(0, eq).trim(), l.substring(eq + 1).trim(), true);
+                    }
             } catch (Exception e) {
                 Log.e(TAG, "runtime setup failed", e);
                 Reports.writeText(new File(gi.files, "setup-error.txt"), Log.getStackTraceString(e));

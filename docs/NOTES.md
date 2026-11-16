@@ -170,3 +170,17 @@
   download|memoria|stop|status --es dir ABS` (never the player's game folder). Tested 2026-11-15:
   op memoria gives files identical to a PC install (Assembly-CSharp, Memoria.Scripts SHA-256), the
   ini merge keeps settings. The Steam download itself is not tested: it needs an account that owns FF9 on Steam (the developer has the GOG release).
+
+## GLES capability check (from FF7Recomp's handoff part 2, section 4)
+- FF7's three PowerVR/Mali failures cannot happen here: render targets are RGBA8 only
+  (SupportsRenderTextureFormat says so), depth is DEPTH24_STENCIL8 (core GLES 3), textures are
+  decoded to RGBA8 on the CPU, and movies are Theora (8-bit only; ffmpeg is built with theora
+  alone). No GL extension is used.
+- What can differ is GL_MAX_TEXTURE_SIZE (GLES 3 promises 2048; the Thor's Adreno has 16384).
+  Textures over it are uploaded as a halved copy (Textures.Shrink, same UVs) and logged once.
+  The log also shows each new largest texture over 2048: Prima Vista's field 'atlas' is
+  2788x2924 with Moguri; Moguri's own PNGs are at most 4096.
+- Test switch: files/env.txt, `FF9_TEST_MAX_TEXTURE=1024` (any FF9_TEST_* line is set before the
+  engine starts). Tested 2026-11-15: at 1024 the title's 2048x2048 'General Atlas' and two
+  screen-sized textures were shrunk and the title drew correctly; a field at 2048 was not
+  checked (the test save would not load that run, also with the switch off).
