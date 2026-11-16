@@ -281,3 +281,13 @@ _ClipArgs (with the right shader and no values, panels vanished). Object.name no
 ShaderLab name for shaders, and the pipeline calls OnWillRenderObject on the visible renderers'
 scripts before gathering draws. A closing dialog's text now shrinks with its box.
 FF9_TEST_DRAWCALLS=1 logs NGUI's draw calls (panel, shader, clip count, clip vectors) as they change.
+
+## Memoria settings page (0.1.7)
+
+Settings > Memoria settings: Memoria's own options as switches and choices (MemoriaSettings.java),
+as its PC launcher has them: shaders, interface, battle, card game, world map camera, autosave,
+Memoria cheats. Each choice is a set of Section.Key=value writes; a section with an Enabled key
+([Battle], [Hacks], [Shaders]) is turned on when one of its options changes, since Memoria ignores
+the section otherwise. A file set by hand to other values shows "Custom". Not here: what
+Settings.apply writes at each Play (frame rate, widescreen, skip logos, boosters, speed, fast
+dialog, swap confirm, analog walk, volumes). Edit Memoria.ini stays for everything else.

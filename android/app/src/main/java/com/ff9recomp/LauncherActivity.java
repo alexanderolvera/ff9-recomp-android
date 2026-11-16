@@ -224,6 +224,7 @@ public class LauncherActivity extends Activity {
             case "achievements": v = achievementsPage(); break;
             case "game": v = gamePage(); break;
             case "report": v = reportPage(); break;
+            case "memoria": v = memoriaPage(); break;
             default: v = settingsPage(); break;
         }
         ScrollView sv = new ScrollView(this);
@@ -378,6 +379,10 @@ public class LauncherActivity extends Activity {
 
     private View settingsPage() {
         LinearLayout col = column();
+        // Memoria's own settings first: easy to find (the Memoria section at the end has it too)
+        ViewGroup top = buttons();
+        top.addView(button("Memoria settings: shaders, card game, battles, cheats...", v -> show("memoria")));
+        col.addView(top);
         boolean first = true;
         for (String[] g : GROUPS) {
             TextView h = heading(g[0]);
@@ -436,12 +441,81 @@ public class LauncherActivity extends Activity {
         TextView mh = heading("Memoria");
         mh.setPadding(0, dp(14), 0, dp(4));
         col.addView(mh);
-        col.addView(note("Memoria's own settings, as its launcher on the PC has them: shaders, fonts, cheats and more. "
-                + "The settings above are written over theirs each time the game starts; the rest stay as you leave them."));
+        col.addView(note("Memoria's own settings, as its launcher on the PC has them: shaders, battles, the card game, the world map camera, cheats and more."));
         ViewGroup mr = buttons();
+        mr.addView(button("Memoria settings", v -> show("memoria")));
         mr.addView(button("Edit Memoria.ini...", v -> editMemoriaIni()));
         col.addView(mr);
         return col;
+    }
+
+    // ------------------------------------------------------------------ Memoria's settings
+
+    /** Memoria's own settings (MemoriaSettings), as switches and choices: each change is written
+     *  into Memoria.ini at once, and the game reads it when it starts. */
+    private View memoriaPage() {
+        LinearLayout col = column();
+        col.addView(heading("Memoria settings"));
+        File ini = new File(install.game, "Memoria.ini");
+        java.util.List<String> lines;
+        try { lines = MemoriaSettings.read(ini); }
+        catch (Exception e) { col.addView(text("Import the game first (Game files): Memoria's settings live in its Memoria.ini.", 16, DIM)); return col; }
+        col.addView(note("As Memoria's launcher on the PC has them. Changes take effect the next time the game starts. "
+                + "Frame rate, widescreen, skip logos, boosters, fast dialog, button layout and volumes are in Settings."));
+        for (String g : MemoriaSettings.GROUPS) {
+            TextView h = heading(g);
+            h.setPadding(0, dp(14), 0, dp(4));
+            col.addView(h);
+            if (g.equals(MemoriaSettings.CHEATS)) col.addView(note("The boosters here are the ones the in-game booster menu offers; Settings > Boosters turns that menu on."));
+            for (MemoriaSettings.Opt o : MemoriaSettings.inGroup(g)) col.addView(memoriaRow(ini, o));
+        }
+        ViewGroup r = buttons();
+        r.addView(button("Edit Memoria.ini...", v -> editMemoriaIni()));
+        col.addView(space(8));
+        col.addView(note("Everything else Memoria has, in the file itself:"));
+        col.addView(r);
+        return col;
+    }
+
+    private View memoriaRow(File ini, MemoriaSettings.Opt o) {
+        int cur;
+        try { cur = MemoriaSettings.current(MemoriaSettings.read(ini), o); } catch (Exception e) { cur = -1; }
+        if (o.toggle) {
+            CheckBox c = new CheckBox(this);
+            c.setText(withNote(o.label, o.note));
+            c.setChecked(cur == 1);
+            c.setOnCheckedChangeListener((x, on) -> { if (!setMemoria(ini, o, on ? 1 : 0)) x.setChecked(!on); });
+            return c;
+        }
+        int[] at = { cur };
+        Button b = listRow("", null);
+        Runnable label = () -> b.setText(withNote(o.label + ":   \u25C0 " + (at[0] >= 0 ? o.choices[at[0]].label : "Custom (set in Memoria.ini)") + " \u25B6", o.note));
+        label.run();
+        java.util.function.IntConsumer step = dir -> {
+            int n = o.choices.length;
+            int next = at[0] < 0 ? (dir > 0 ? 0 : n - 1) : (at[0] + dir + n) % n;
+            if (setMemoria(ini, o, next)) { at[0] = next; label.run(); }
+        };
+        b.setOnClickListener(v -> step.accept(1));
+        b.setOnKeyListener((v, code, e) -> {
+            if (code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT) return false;
+            if (e.getAction() == KeyEvent.ACTION_DOWN) { Sfx.play(this, Sfx.CURSOR); step.accept(code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1); }
+            return true;
+        });
+        return b;
+    }
+
+    /** Writes one choice into Memoria.ini (read again first: the file may have changed). */
+    private boolean setMemoria(File ini, MemoriaSettings.Opt o, int choice) {
+        try {
+            java.util.List<String> lines = MemoriaSettings.read(ini);
+            MemoriaSettings.apply(lines, o.choices[choice]);
+            MemoriaSettings.write(ini, lines);
+            return true;
+        } catch (Exception e) {
+            message("Could not change Memoria.ini", e.getMessage());
+            return false;
+        }
     }
 
     /** Memoria.ini in a text box (GitHub issue 9): Save writes it back. */
@@ -1700,6 +1774,7 @@ public class LauncherActivity extends Activity {
         if (code == KeyEvent.KEYCODE_BUTTON_B || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE) {
             if (!down || e.getRepeatCount() > 0) return true;
             if (page.equals("mod") && inContent(f)) { show(modBack); return true; }
+            if (page.equals("memoria") && inContent(f)) { show("settings"); return true; }
             if (inContent(f)) { Button n = nav.get(page.equals("mod") ? modBack : page); if (n != null) n.requestFocus(); return true; }
             if (code == KeyEvent.KEYCODE_BACK) moveTaskToBack(true);
             return true;
