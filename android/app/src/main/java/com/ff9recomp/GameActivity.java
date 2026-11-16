@@ -78,6 +78,13 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         rumble = prefs.getInt("rumble", 1);
         crt = prefs.getBoolean("crt_filter", false);
         setContentView(root);
+        // the whole screen: draw behind the (hidden) system bars and into display cutouts, so devices
+        // with a navigation bar don't keep its strip empty; anything uncovered is black, not the theme's grey
+        getWindow().setDecorFitsSystemWindows(false);
+        WindowManager.LayoutParams cut = getWindow().getAttributes();
+        cut.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        getWindow().setAttributes(cut);
+        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK));
         // Smooth 120: ask the display for its fastest mode at this resolution (the Thor's 120 Hz)
         preferRefreshRate(prefs.getInt("fps", 1) == 2 ? 120 : 60);
         startDisplayWatch(prefs.getInt("fps", 1));
@@ -456,8 +463,11 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     private boolean failed;
 
     private void hideSystemUi() {
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        // hide the status and navigation bars; a swipe from the edge shows them for a moment
+        android.view.WindowInsetsController c = getWindow().getInsetsController();
+        if (c == null) return;
+        c.hide(android.view.WindowInsets.Type.systemBars());
+        c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
     }
 
     @Override
