@@ -18,6 +18,8 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Memoria's mod catalog (the list Memoria's own launcher shows): fetched from Memoria's GitHub,
@@ -33,6 +35,8 @@ final class ModCatalog {
         String name = "", version = "", folder = "", author = "", description = "", category = "", url = "", website = "", format = "";
         String releaseDate = "", patchNotes = "", preview = "", minMemoria = "";
         final List<String> incompatible = new ArrayList<>();
+        /** The mod's options (Memoria's sub-mods) and the headers between them, in order. */
+        final List<SubMod> subMods = new ArrayList<>();
         int priority;
 
         /** The download size when the patch notes give one ("Download Size: 3,2GB"), else "". */
@@ -40,6 +44,19 @@ final class ModCatalog {
             java.util.regex.Matcher mt = java.util.regex.Pattern.compile("(?i)download size\\s*:\\s*([0-9.,]+\\s*[KMG]B)").matcher(patchNotes);
             return mt.find() ? mt.group(1).replace(" ", "") : "";
         }
+    }
+
+    /** One of a mod's options: a folder inside the mod that Memoria loads when it is chosen (a
+     *  "sub-mod"), or a header that only titles the options below it. Options in the same group
+     *  exclude each other; ActivateWithMod / ActivateWithoutMod ones follow other mods by
+     *  themselves and are not shown. As Memoria.Launcher's Mod.cs reads them. */
+    static final class SubMod {
+        String name = "", path = "", description = "", group;
+        boolean header, isDefault;
+        List<String> withMod, withoutMod;
+        int priority;
+        boolean auto() { return withMod != null || withoutMod != null; }
+        boolean choice() { return !header && !auto(); }
     }
 
     private ModCatalog() {}
@@ -93,27 +110,55 @@ final class ModCatalog {
         return new ArrayList<>(parsed);
     }
 
-    private static List<Mod> parse(File f) throws IOException {
+    private static List<Mod> parse(File f) throws IOException { return parse(f, true); }
+
+    /** The mods in a catalog, or (catalog false) the one in a mod's own ModDescription.xml, which
+     *  has no download link. */
+    private static List<Mod> parse(File f, boolean catalog) throws IOException {
         List<Mod> out = new ArrayList<>();
         if (!f.isFile()) return out;
         try (InputStream in = new FileInputStream(f)) {
             XmlPullParser p = Xml.newPullParser();
             p.setInput(in, "UTF-8");
             Mod m = null;
+            SubMod s = null;
             int depth = 0, modDepth = -1;
             String tag = null;
             for (int ev = p.getEventType(); ev != XmlPullParser.END_DOCUMENT; ev = p.next()) {
                 if (ev == XmlPullParser.START_TAG) {
                     depth++;
-                    if (p.getName().equals("Mod") && m == null) { m = new Mod(); modDepth = depth; }
-                    tag = p.getName();
+                    String name = p.getName();
+                    if (name.equals("Mod") && m == null) { m = new Mod(); modDepth = depth; }
+                    else if (m != null && s == null && depth == modDepth + 1 && (name.equals("SubMod") || name.equals("Header"))) {
+                        s = new SubMod();
+                        s.header = name.equals("Header");
+                    } else if (s != null && !s.header && depth == modDepth + 2 && name.equals("Default")) s.isDefault = true;
+                    tag = name;
                 } else if (ev == XmlPullParser.END_TAG) {
-                    if (m != null && depth == modDepth && p.getName().equals("Mod")) {
-                        if (!m.folder.isEmpty() && !m.url.isEmpty()) out.add(m);
+                    if (s != null && depth == modDepth + 1) {
+                        // as Memoria: a header needs a title, an option a name and a folder
+                        if (s.header ? !s.name.isEmpty() : !s.name.isEmpty() && !s.path.isEmpty()) m.subMods.add(s);
+                        s = null;
+                    } else if (m != null && depth == modDepth && p.getName().equals("Mod")) {
+                        if (!catalog || !m.folder.isEmpty() && !m.url.isEmpty()) out.add(m);
                         m = null;
                     }
                     depth--;
                     tag = null;
+                } else if (ev == XmlPullParser.TEXT && s != null && tag != null) {
+                    String t = p.getText().trim();
+                    if (s.header && depth == modDepth + 1) s.name = t;
+                    else if (!s.header && depth == modDepth + 2) {
+                        switch (tag) {
+                            case "Name": s.name = t; break;
+                            case "InstallationPath": s.path = t; break;
+                            case "Description": s.description = t; break;
+                            case "Group": s.group = t; break;
+                            case "ActivateWithMod": s.withMod = names(t); s.withoutMod = null; break;   // wins, as in Memoria
+                            case "ActivateWithoutMod": if (s.withMod == null) s.withoutMod = names(t); break;
+                            case "Priority": try { s.priority = Integer.parseInt(t); } catch (NumberFormatException ignored) { } break;
+                        }
+                    }
                 } else if (ev == XmlPullParser.TEXT && m != null && tag != null && depth == modDepth + 1) {
                     String t = p.getText().trim();
                     switch (tag) {
@@ -138,6 +183,12 @@ final class ModCatalog {
         } catch (org.xmlpull.v1.XmlPullParserException e) {
             throw new IOException("the catalog could not be read: " + e.getMessage());
         }
+        return out;
+    }
+
+    private static List<String> names(String list) {
+        List<String> out = new ArrayList<>();
+        for (String x : list.split(",")) out.add(x.trim());
         return out;
     }
 
@@ -218,26 +269,23 @@ final class ModCatalog {
 
     private static String safe(String s) { return s.replaceAll("[^A-Za-z0-9._-]", "_"); }
 
-    // ------------------------------------------------------------------ Memoria.ini FolderNames
+    // ------------------------------------------------------------------ Memoria.ini: mods and their options
+    //
+    // As Memoria.Launcher's mod manager (MainWindow_ModManager.cs, Mod.cs) keeps them:
+    //  FolderNames    the folders Memoria loads, highest priority first: each mod that is on, with
+    //                 its chosen options' folders ("Mod/Options/X") around it by their Priority;
+    //  Priorities     the installed mods' folders (a mod not listed is new: it gets its defaults);
+    //  ActiveSubMods  every installed mod's chosen options ("Mod/Options/X"), on or off.
 
-    /** The mod folders Memoria loads (FolderNames), highest priority first. */
+    /** The mods that are on (FolderNames without the options' folders), highest priority first. */
     static List<String> enabled(Context c) {
         List<String> out = new ArrayList<>();
-        for (String line : iniLines(c)) {
-            String t = line.trim();
-            if (t.toLowerCase(java.util.Locale.ROOT).startsWith("foldernames")) {
-                int eq = t.indexOf('=');
-                if (eq < 0) break;
-                for (String part : t.substring(eq + 1).split(",")) {
-                    String f = part.trim();
-                    if (f.startsWith("\"") && f.endsWith("\"") && f.length() >= 2) f = f.substring(1, f.length() - 1);
-                    if (!f.isEmpty()) out.add(f);
-                }
-                break;
-            }
-        }
+        for (String f : list(iniLines(c), "FolderNames")) if (!f.contains("/")) out.add(f);
         return out;
     }
+
+    /** Everything Memoria loads, options' folders included, highest priority first. */
+    static List<String> folderNames(Context c) { return list(iniLines(c), "FolderNames"); }
 
     static boolean isEnabled(Context c, Mod m) {
         for (String f : enabled(c)) if (f.equalsIgnoreCase(m.folder)) return true;
@@ -250,6 +298,7 @@ final class ModCatalog {
     /** Turns a folder on or off. The other mods keep the player's order; one turned on goes where
      *  its catalog priority puts it (above the first mod with a lower one). */
     static void setEnabled(Context c, String folder, boolean on) throws IOException {
+        Map<String, Set<String>> ch = choices(c);
         List<String> folders = enabled(c);
         folders.removeIf(f -> f.equalsIgnoreCase(folder));
         if (on) {
@@ -258,49 +307,219 @@ final class ModCatalog {
             for (int i = 0; i < folders.size(); i++) if (priorityOf(all, folders.get(i)) < p) { at = i; break; }
             folders.add(at, folder);
         }
-        write(c, folders);
+        write(c, folders, ch);
     }
 
     /** Moves an enabled folder up (-1, higher priority) or down (+1). */
     static void move(Context c, String folder, int dir) throws IOException {
+        Map<String, Set<String>> ch = choices(c);
         List<String> folders = enabled(c);
         int i = -1;
         for (int k = 0; k < folders.size(); k++) if (folders.get(k).equalsIgnoreCase(folder)) i = k;
         int j = i + dir;
         if (i < 0 || j < 0 || j >= folders.size()) return;
         Collections.swap(folders, i, j);
-        write(c, folders);
+        write(c, folders, ch);
     }
 
     /** All installed mods on, in catalog priority order, or all off. */
     static void setAll(Context c, boolean on) throws IOException {
+        Map<String, Set<String>> ch = choices(c);
         List<String> folders = new ArrayList<>();
         if (on) {
             List<Mod> all = mods(c);
             folders.addAll(installedFolders(c));
             Collections.sort(folders, (a, b) -> Integer.compare(priorityOf(all, b), priorityOf(all, a)));
         }
-        write(c, folders);
+        write(c, folders, ch);
     }
 
-    private static void write(Context c, List<String> folders) throws IOException {
-        List<Mod> all = mods(c);
-        StringBuilder names = new StringBuilder(), prios = new StringBuilder();
-        for (String f : folders) {
-            if (names.length() > 0) { names.append(", "); prios.append(", "); }
-            names.append('"').append(f).append('"');
-            prios.append('"').append(priorityOf(all, f)).append('"');
+    /** Writes Memoria.ini again from the mods that are on and the chosen options: before the game
+     *  starts, so a mod installed or imported without its options gets Memoria's defaults. */
+    static void sync(Context c) throws IOException {
+        if (!new File(game(c), "Memoria.ini").isFile()) return;
+        write(c, enabled(c), choices(c));
+    }
+
+    // ---- options
+
+    /** An installed mod's options: from its ModDescription.xml (what Memoria's launcher reads),
+     *  else from the catalog. */
+    static List<SubMod> subMods(Context c, String folder) {
+        Mod d = description(c, folder);
+        if (d != null && !d.subMods.isEmpty()) return d.subMods;
+        Mod m = byFolder(c, folder);
+        return m != null ? m.subMods : new ArrayList<>();
+    }
+
+    /** How many options the player can choose for an installed mod. */
+    static int choiceCount(Context c, String folder) {
+        int n = 0;
+        for (SubMod s : subMods(c, folder)) if (s.choice()) n++;
+        return n;
+    }
+
+    /** The chosen options of an installed mod (lower-case paths inside the mod). */
+    static Set<String> chosen(Context c, String folder) {
+        Set<String> set = choices(c).get(key(folder));
+        return set != null ? set : new java.util.HashSet<>();
+    }
+
+    static boolean isChosen(Set<String> chosen, SubMod s) { return chosen.contains(key(s.path)); }
+
+    /** Chooses an option or drops it. As Memoria: choosing one of a group drops the others; dropping
+     *  one brings back the group's default, if it has one. */
+    static void choose(Context c, String folder, SubMod s, boolean on) throws IOException {
+        Map<String, Set<String>> ch = choices(c);
+        Set<String> set = ch.get(key(folder));
+        if (set == null) { set = new java.util.HashSet<>(); ch.put(key(folder), set); }
+        List<SubMod> subs = subMods(c, folder);
+        if (on) {
+            set.add(key(s.path));
+            if (s.group != null) for (SubMod o : subs) if (o.choice() && s.group.equals(o.group) && !key(o.path).equals(key(s.path))) set.remove(key(o.path));
+        } else {
+            set.remove(key(s.path));
+            if (s.group != null) for (SubMod o : subs) if (o.choice() && o.isDefault && s.group.equals(o.group)) { set.add(key(o.path)); break; }
         }
-        File ini = new File(game(c), "Memoria.ini");
+        write(c, enabled(c), ch);
+    }
+
+    /** The chosen options of every installed mod (lower-case paths, by lower-case mod folder). A mod
+     *  Memoria.ini's Priorities doesn't list yet is new: it gets the options marked Default. */
+    private static Map<String, Set<String>> choices(Context c) {
         List<String> lines = iniLines(c);
-        Settings.put(lines, "Mod", "FolderNames", names.toString());
-        Settings.put(lines, "Mod", "Priorities", prios.toString());
-        Files.write(ini.toPath(), lines, StandardCharsets.ISO_8859_1);
+        List<String> known = list(lines, "Priorities");
+        Set<String> saved = new java.util.HashSet<>();
+        for (String x : list(lines, "ActiveSubMods")) saved.add(key(x));
+        // a Memoria.ini from before ActiveSubMods: the options' folders in FolderNames are the chosen ones
+        if (!has(lines, "ActiveSubMods")) for (String x : list(lines, "FolderNames")) if (x.contains("/")) saved.add(key(x));
+        Map<String, Set<String>> out = new java.util.HashMap<>();
+        for (String folder : installedFolders(c)) {
+            boolean seen = containsIgnoreCase(known, folder);
+            Set<String> set = new java.util.HashSet<>();
+            for (SubMod s : subMods(c, folder))
+                if (s.choice() && (seen ? saved.contains(key(folder + "/" + s.path)) : s.isDefault)) set.add(key(s.path));
+            out.put(key(folder), set);
+        }
+        return out;
+    }
+
+    private static String key(String s) { return s.replace('\\', '/').toLowerCase(java.util.Locale.ROOT); }
+
+    /** The mod's own ModDescription.xml, or null. */
+    private static Mod description(Context c, String folder) {
+        try {
+            List<Mod> l = parse(new File(new File(game(c), folder), "ModDescription.xml"), false);
+            return l.isEmpty() ? null : l.get(0);
+        } catch (IOException e) { return null; }
+    }
+
+    // ---- writing
+
+    private static void write(Context c, List<String> on, Map<String, Set<String>> ch) throws IOException {
+        File game = game(c);
+        // the mods that are on and exist, then the other installed ones (Priorities lists them all)
+        List<String> order = new ArrayList<>();
+        for (String f : on) if (new File(game, f).isDirectory() && !containsIgnoreCase(order, f)) order.add(f);
+        int onCount = order.size();
+        for (String f : installedFolders(c)) if (!containsIgnoreCase(order, f)) order.add(f);
+        Set<String> onNames = new java.util.HashSet<>();
+        for (int i = 0; i < onCount; i++) onNames.add(modName(c, order.get(i)));
+
+        List<String> names = new ArrayList<>(), prios = new ArrayList<>(), active = new ArrayList<>();
+        for (int i = 0; i < order.size(); i++) {
+            String folder = order.get(i);
+            prios.add(folder);
+            List<SubMod> subs = subMods(c, folder);
+            Set<String> chosen = ch.get(key(folder));
+            Set<String> act = new java.util.HashSet<>(chosen != null ? chosen : Collections.<String>emptySet());
+            // a group with nothing chosen gets its default (Memoria's UpdateModSettings)
+            for (SubMod s : subs) {
+                if (!s.choice() || s.group == null) continue;
+                boolean any = false;
+                SubMod def = null;
+                for (SubMod o : subs) {
+                    if (!o.choice() || !s.group.equals(o.group)) continue;
+                    if (act.contains(key(o.path))) { any = true; break; }
+                    if (o.isDefault) def = o;
+                }
+                if (!any && def != null) act.add(key(def.path));
+            }
+            for (SubMod s : subs) if (s.choice() && act.contains(key(s.path))) active.add(folder + "/" + s.path);
+            // options that follow other mods: on when all of ActivateWithMod are on, or none of ActivateWithoutMod
+            for (SubMod s : subs) {
+                if (!s.auto()) continue;
+                int found = 0;
+                for (String n : s.withMod != null ? s.withMod : s.withoutMod) if (onNames.contains(n)) found++;
+                boolean a = s.withMod != null ? found == s.withMod.size() : found == 0;
+                if (a) act.add(key(s.path)); else act.remove(key(s.path));
+            }
+            if (i >= onCount) continue;
+            // the mod's folder among its options' folders, by Priority (Mod.EnumerateModAndSubModsOrdered)
+            List<SubMod> sorted = new ArrayList<>();
+            for (SubMod s : subs) if (!s.header) sorted.add(s);
+            Collections.sort(sorted, (a, b) -> Integer.compare(a.priority, b.priority));
+            int k = 0;
+            for (; k < sorted.size() && sorted.get(k).priority >= 0; k++) addSub(names, game, folder, sorted.get(k), act);
+            names.add(folder);
+            for (; k < sorted.size(); k++) addSub(names, game, folder, sorted.get(k), act);
+        }
+        List<String> lines = iniLines(c);
+        Settings.put(lines, "Mod", "FolderNames", quoted(names));
+        Settings.put(lines, "Mod", "Priorities", quoted(prios));
+        Settings.put(lines, "Mod", "ActiveSubMods", quoted(active));
+        Files.write(new File(game, "Memoria.ini").toPath(), lines, StandardCharsets.ISO_8859_1);
+    }
+
+    private static void addSub(List<String> names, File game, String folder, SubMod s, Set<String> act) {
+        String p = folder + "/" + s.path;
+        if (act.contains(key(s.path)) && new File(game, p).isDirectory()) names.add(p);
+    }
+
+    /** A mod's name as other mods' ActivateWithMod give it: from its ModDescription.xml or the catalog. */
+    private static String modName(Context c, String folder) {
+        Mod d = description(c, folder);
+        if (d != null && !d.name.isEmpty()) return d.name;
+        Mod m = byFolder(c, folder);
+        return m != null ? m.name : folder;
+    }
+
+    private static String quoted(List<String> l) {
+        if (l.isEmpty()) return "";
+        StringBuilder b = new StringBuilder();
+        for (String x : l) b.append(b.length() > 0 ? ", " : "").append('"').append(x).append('"');
+        return b.toString();
     }
 
     private static int priorityOf(List<Mod> all, String folder) {
         for (Mod m : all) if (m.folder.equalsIgnoreCase(folder)) return m.priority;
         return 0;
+    }
+
+    /** A Memoria.ini list ("a", "b" or a, b); empty when the key is missing or blank. */
+    private static List<String> list(List<String> lines, String key) {
+        List<String> out = new ArrayList<>();
+        String v = value(lines, key);
+        if (v == null || v.trim().isEmpty()) return out;
+        if (v.contains("\"")) {
+            java.util.regex.Matcher mt = java.util.regex.Pattern.compile("\"([^\"]*)\"").matcher(v);
+            while (mt.find()) if (!mt.group(1).trim().isEmpty()) out.add(mt.group(1).trim());
+        } else {
+            for (String x : v.split(",")) if (!x.trim().isEmpty()) out.add(x.trim());
+        }
+        return out;
+    }
+
+    private static boolean has(List<String> lines, String key) { return value(lines, key) != null; }
+
+    private static String value(List<String> lines, String key) {
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.startsWith(";") || t.startsWith("#")) continue;
+            int eq = t.indexOf('=');
+            if (eq > 0 && t.substring(0, eq).trim().equalsIgnoreCase(key)) return t.substring(eq + 1);
+        }
+        return null;
     }
 
     private static List<String> iniLines(Context c) {

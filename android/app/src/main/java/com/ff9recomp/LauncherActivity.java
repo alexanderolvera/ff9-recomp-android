@@ -320,6 +320,7 @@ public class LauncherActivity extends Activity {
         if (!ready()) { show("game"); return; }
         try {
             Settings.apply(this, install.game);
+            ModCatalog.sync(this);          // mods' options: Memoria's defaults for a mod new to Memoria.ini
         } catch (Exception e) {
             status.setText("Could not write the settings into Memoria.ini: " + e.getMessage());
             return;
@@ -496,6 +497,8 @@ public class LauncherActivity extends Activity {
         String name = m != null ? m.name : folder;
         String ver = m == null ? "added by hand" : ModCatalog.installedVersion(this, m).isEmpty() ? "" : "v" + ModCatalog.installedVersion(this, m);
         if (m != null && ModCatalog.updatable(this, m)) ver += (ver.isEmpty() ? "" : ", ") + "update " + m.version;
+        int opts = m != null ? ModCatalog.choiceCount(this, folder) : 0;
+        if (opts > 0) ver += (ver.isEmpty() ? "" : ", ") + opts + " options under Info";
         cb.setText(withNote((enabled ? (pos + 1) + ".  " : "") + name, ver));
         cb.setChecked(enabled);
         cb.setTag("focus:on:" + folder);
@@ -825,6 +828,7 @@ public class LauncherActivity extends Activity {
         }));
         actions.addView(button("Back", v -> show(modBack)));
         col.addView(actions);
+        if (inst && ModCatalog.choiceCount(this, m.folder) > 0) col.addView(modOptions(m.folder));
         if (!m.preview.isEmpty()) {
             android.widget.ImageView img = new android.widget.ImageView(this);
             img.setAdjustViewBounds(true);
@@ -845,6 +849,40 @@ public class LauncherActivity extends Activity {
             col.addView(text(m.patchNotes.replaceAll("[ \\t]*\\n[ \\t]*", "\n"), 14, DIM));
         }
         return col;
+    }
+
+    /** An installed mod's options (Memoria's sub-mods), as Memoria's Mod Manager lists them: under
+     *  their headers, one checkbox each; one of a group replaces the others. */
+    private View modOptions(String folder) {
+        LinearLayout box = column();
+        TextView h = text("Options", 15, ACCENT);
+        h.setPadding(0, dp(10), 0, 0);
+        box.addView(h);
+        box.addView(note("The mod's own choices, as in Memoria's Mod Manager. Choosing one of a group replaces the others in it. "
+                + "Changes apply the next time the game starts."));
+        java.util.Set<String> chosen = ModCatalog.chosen(this, folder);
+        String header = null;
+        for (ModCatalog.SubMod s : ModCatalog.subMods(this, folder)) {
+            if (s.header) { header = s.name; continue; }
+            if (!s.choice()) continue;
+            if (header != null) {
+                TextView t = text(header, 14, TEXT);
+                t.setTypeface(Typeface.DEFAULT_BOLD);
+                t.setPadding(0, dp(8), 0, dp(2));
+                box.addView(t);
+                header = null;
+            }
+            CheckBox cb = new CheckBox(this);
+            cb.setText(withNote(s.name, s.description.replaceAll("\\s*\\n\\s*", " ").trim()));
+            cb.setChecked(ModCatalog.isChosen(chosen, s));
+            cb.setTag("focus:opt:" + folder + "/" + s.path);
+            cb.setOnCheckedChangeListener((x, on) -> {
+                try { ModCatalog.choose(this, folder, s, on); } catch (Exception e) { message("Could not change Memoria.ini", e.getMessage()); }
+                refresh();
+            });
+            box.addView(cb);
+        }
+        return box;
     }
 
     /** The mod's preview picture, downloaded once into files/mods/previews. */

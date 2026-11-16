@@ -191,7 +191,7 @@ final class Reports {
         if (prime.isFile()) s.append("Memoria.Prime.dll: ").append(prime.length()).append(" bytes, ")
                              .append(new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(prime.lastModified()))).append("\n");
         try {
-            List<String> mods = ModCatalog.enabled(c);
+            List<String> mods = ModCatalog.folderNames(c);       // with the options' folders
             s.append("Mods on (highest priority first): ").append(mods.isEmpty() ? "none" : String.join(", ", mods)).append("\n");
         } catch (Exception e) { s.append("Mods: ").append(e.getMessage()).append("\n"); }
         File st = latestState(c);
