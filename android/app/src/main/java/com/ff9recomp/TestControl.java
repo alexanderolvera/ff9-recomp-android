@@ -57,7 +57,18 @@ public class TestControl extends BroadcastReceiver {
                 Bundle b = intent.getExtras();
                 SharedPreferences.Editor e = prefs.edit();
                 JSONObject changed = new JSONObject();
+                java.io.File ini = new java.io.File(new GameInstall(ctx).game, "Memoria.ini");
+                java.util.List<String> iniLines = null;
                 for (String k : b == null ? new java.util.HashSet<String>() : b.keySet()) {
+                    if (k.startsWith("memoria.")) {     // memoria.Section.Key: written into Memoria.ini, as the Memoria settings page does
+                        int dot = k.indexOf('.', 8);
+                        if (dot < 0) { out.put("error", "use memoria.Section.Key, not " + k); continue; }
+                        if (iniLines == null) iniLines = MemoriaSettings.read(ini);
+                        String v = String.valueOf(b.get(k)).trim();
+                        MemoriaSettings.apply(iniLines, new MemoriaSettings.Choice("test", k.substring(8) + "=" + v));
+                        changed.put(k, v);
+                        continue;
+                    }
                     Class<?> t = TYPES.get(k);
                     Object v = b.get(k);
                     if (t == null) { out.put("error", "unknown setting " + k); continue; }
@@ -66,6 +77,7 @@ public class TestControl extends BroadcastReceiver {
                     else { boolean z = v instanceof Boolean ? (Boolean) v : Boolean.parseBoolean(String.valueOf(v).trim()); e.putBoolean(k, z); changed.put(k, z); }
                 }
                 e.commit();
+                if (iniLines != null) MemoriaSettings.write(ini, iniLines);
                 out.put("set", changed);
                 break;
             }
