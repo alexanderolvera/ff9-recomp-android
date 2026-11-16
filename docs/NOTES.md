@@ -184,3 +184,13 @@
   engine starts). Tested 2026-11-15: at 1024 the title's 2048x2048 'General Atlas' and two
   screen-sized textures were shrunk and the title drew correctly; a field at 2048 was not
   checked (the test save would not load that run, also with the switch off).
+
+## Movie mods (2K / 4K video packs)
+- The catalog's video packs replace StreamingAssets/ma/FMV*.bytes with Ogg Theora at 1920x1440
+  (2K) or larger; Memoria finds them in the mod folder (MovieMaterial.Open, TryFindAssetInModOnDisc),
+  and the same FFmpeg Theora decoder plays them. The opening is FMV001.
+- theora.c decodes with frame + slice threads (thread_count 0) and logs per movie at close:
+  "movie WxH: N frames, decode X ms average, Y ms worst, Z over a frame's time".
+- Tested 2026-11-15 on the Thor: the 2K pack's FMV001 as a test mod, 1799 of 1800 frames, 0.1 ms
+  average on the game thread, none late; 16 FPS counter during movies as with the originals.
+- files/env.txt also passes FF9_TRACE_* (FF9_TRACE_MOVIE=1 logs each movie's path and size).

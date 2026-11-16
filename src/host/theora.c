@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <GLES3/gl3.h>
 
 #include <libavcodec/avcodec.h>
@@ -25,7 +26,16 @@ typedef struct {
     int width, height;
     int ystride, yheight, uvstride, uvheight;
     GLuint tex[3];
+    /* decode cost, written to the log when the movie closes (high-resolution movie mods) */
+    int frames, slow;
+    double decodeMs, worstMs;
 } Movie;
+
+static double now_ms(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
 
 EXPORT Movie *CreateContext(void) {
     Movie *m = calloc(1, sizeof *m);
@@ -35,6 +45,11 @@ EXPORT Movie *CreateContext(void) {
 
 EXPORT void CloseStream(Movie *m) {
     if (!m) return;
+    if (m->frames > 0 && m->dec)
+        fprintf(stdout, "movie %dx%d: %d frames, decode %.1f ms average, %.1f ms worst, %d over a frame's time\n",
+                m->dec->width, m->dec->height, m->frames, m->decodeMs / m->frames, m->worstMs, m->slow);
+    m->frames = m->slow = 0;
+    m->decodeMs = m->worstMs = 0;
     if (m->dec) avcodec_free_context(&m->dec);
     if (m->fmt) avformat_close_input(&m->fmt);
     if (m->frame) av_frame_free(&m->frame);
@@ -80,6 +95,10 @@ EXPORT BOOL OpenStream(Movie *m, const char *path, int offset, int size, BOOL po
     if (!c) { fprintf(stderr, "theora: no decoder for %s\n", path); CloseStream(m); return 0; }
     m->dec = avcodec_alloc_context3(c);
     avcodec_parameters_to_context(m->dec, st->codecpar);
+    /* the decoder on several cores: high-resolution movie mods (1920x1440, 2880x2160) are too
+       much for one core while the game runs */
+    m->dec->thread_count = 0;
+    m->dec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     if (avcodec_open2(m->dec, c, NULL) < 0) { CloseStream(m); return 0; }
     m->frame = av_frame_alloc();
     m->pkt = av_packet_alloc();
@@ -130,7 +149,13 @@ EXPORT void SetTargetDisplayDecodeTime(Movie *m, double t) {
     if (!m || m->stream < 0) return;
     m->targetTime = t;
     while (!m->finished && m->decodedTime + 1.0 / m->fps <= t) {
+        double t0 = now_ms();
         if (!decode_next(m)) break;
+        double ms = now_ms() - t0;
+        m->frames++;
+        m->decodeMs += ms;
+        if (ms > m->worstMs) m->worstMs = ms;
+        if (ms > 1000.0 / m->fps) m->slow++;
     }
     upload(m);
 }

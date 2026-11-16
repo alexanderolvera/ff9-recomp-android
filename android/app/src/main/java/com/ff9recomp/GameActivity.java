@@ -495,7 +495,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
                 if (env.isFile())
                     for (String l : new String(java.nio.file.Files.readAllBytes(env.toPath()), java.nio.charset.StandardCharsets.UTF_8).split("\n")) {
                         int eq = l.indexOf('=');
-                        if (eq > 0 && l.startsWith("FF9_TEST_")) Os.setenv(l.substring(0, eq).trim(), l.substring(eq + 1).trim(), true);
+                        if (eq > 0 && (l.startsWith("FF9_TEST_") || l.startsWith("FF9_TRACE_"))) Os.setenv(l.substring(0, eq).trim(), l.substring(eq + 1).trim(), true);
                     }
             } catch (Exception e) {
                 Log.e(TAG, "runtime setup failed", e);
