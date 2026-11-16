@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FF9Recomp launcher icon (themed-icon silhouette): an airship crossing two moons at dusk (drawn as
+     vectors, not taken from the game). Written by tools/make_icon.py; edit that, not this. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#80FFFFFF" android:pathData="M44.5,45 a16.5,16.5 0 1,0 33,0 a16.5,16.5 0 1,0 -33,0 Z"/>
+    <group android:rotation="-7" android:scaleX="0.95" android:scaleY="0.95" android:translateX="52" android:translateY="58">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M-21,0 a21,7.2 0 1,0 42,0 a21,7.2 0 1,0 -42,0 Z M17,-1.6 L27,-8.6 L25.4,0 L27,8.6 L17,1.8 Z M-5,-6.6 L-1.5,-13 L5.5,-6.6 Z M-9,6.2 L-6.5,11.8 L9.5,11.8 L12.5,6.2 Z M-23.9,0 a1.3,6.2 0 1,0 2.6,0 a1.3,6.2 0 1,0 -2.6,0 Z"/>
+    </group>
+</vector>

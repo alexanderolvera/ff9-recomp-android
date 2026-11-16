@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/banner.png" alt="FF9Recomp: FINAL FANTASY IX, native Android recomp. The app icon, an airship crossing two moons at dusk"></p>
+
 # FF9Recomp
 
 FINAL FANTASY IX (Steam) with Memoria and Moguri Mod, running natively on Android (AYN Thor)
