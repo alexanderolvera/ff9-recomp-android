@@ -370,7 +370,7 @@ public class LauncherActivity extends Activity {
         switch (key) {
             case "fps": return new String[] { "As shipped: fields 30, battles 15", "Memoria fills in frames: everything at 60", "Fields and battles at 120 (experimental, warmer)" }[i];
             case "start": return new String[] { "As shipped", "Straight back to the place you were last" }[i];
-            case "resolution": return new String[] { "The screen's own", "Cooler, a little softer", "Coolest, for weaker devices" }[i];
+            case "resolution": return new String[] { "The screen's own", "Cooler, a little softer", "Coolest, for weaker devices", "Blocky: only when the GPU is what holds it back" }[i];
             case "touch_controls": return new String[] { "Only when no controller is connected", "Always on screen", "Never" }[i];
             default: return null;
         }
@@ -393,7 +393,7 @@ public class LauncherActivity extends Activity {
                     c.setChecked(Settings.get(this, o) != 0);
                     c.setOnCheckedChangeListener((x, on) -> { Settings.set(this, o, on ? 1 : 0); updateStatus(); });
                     col.addView(c);
-                } else if (o.choices.length <= 3) {
+                } else if (o.choices.length <= 3 || o.key.equals("resolution")) {
                     if (g.length > 2) col.addView(text(o.label, 15, ACCENT));
                     RadioGroup rg = new RadioGroup(this);
                     int cur = Settings.get(this, o);
@@ -433,7 +433,44 @@ public class LauncherActivity extends Activity {
         ViewGroup r = buttons();
         r.addView(button("Arrange touch controls", v -> startActivity(new Intent(this, TouchLayoutActivity.class))));
         col.addView(r);
+        TextView mh = heading("Memoria");
+        mh.setPadding(0, dp(14), 0, dp(4));
+        col.addView(mh);
+        col.addView(note("Memoria's own settings, as its launcher on the PC has them: shaders, fonts, cheats and more. "
+                + "The settings above are written over theirs each time the game starts; the rest stay as you leave them."));
+        ViewGroup mr = buttons();
+        mr.addView(button("Edit Memoria.ini...", v -> editMemoriaIni()));
+        col.addView(mr);
         return col;
+    }
+
+    /** Memoria.ini in a text box (GitHub issue 9): Save writes it back. */
+    private void editMemoriaIni() {
+        File ini = new File(install.game, "Memoria.ini");
+        String text;
+        try { text = new String(java.nio.file.Files.readAllBytes(ini.toPath()), java.nio.charset.StandardCharsets.ISO_8859_1); }
+        catch (Exception e) { message("No Memoria.ini", "Import the game first (Game files)."); return; }
+        android.widget.EditText ed = new android.widget.EditText(this);
+        ed.setText(text.replace("\r\n", "\n"));
+        ed.setTypeface(android.graphics.Typeface.MONOSPACE);
+        ed.setTextSize(13);
+        ed.setTextColor(TEXT);
+        ed.setGravity(Gravity.TOP | Gravity.START);
+        ed.setHorizontallyScrolling(true);
+        ed.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(ed);
+        AlertDialog d = styled(new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Memoria.ini").setView(sv)
+                .setPositiveButton("Save", (x, w) -> {
+                    try {
+                        Settings.writeIni(ini, ed.getText().toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                        status.setText("Memoria.ini saved.");
+                    } catch (Exception e) { message("Could not write Memoria.ini", e.getMessage()); }
+                })
+                .setNegativeButton("Cancel", null).show());
+        if (d.getWindow() != null) d.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
     }
 
     private View stepper(Settings.Option o) {

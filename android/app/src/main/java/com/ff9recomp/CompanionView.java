@@ -47,7 +47,7 @@ public class CompanionView extends View {
     // FF9's menu windows: the game's own window skin (its paper texture and silver frame, cut from
     // the player's copy at runtime); before it arrives, FF9's grey-blue stone with a cream frame.
     // Gold marks what is selected or on, as the game's own cursor does.
-    private static final int BG = Color.rgb(8, 9, 14), TEXT = 0xFFF2EEE2, LABEL = 0xFFB8BAC6, GOLD = 0xFFF0CF72, OK = 0xFF9EE0A8;
+    private static final int BG = Color.BLACK, TEXT = 0xFFF2EEE2, LABEL = 0xFFB8BAC6, GOLD = 0xFFF0CF72, OK = 0xFF9EE0A8;
     private static final int WIN_A = 0xFF6A7088, WIN_B = 0xFF454A5E, WIN_C = 0xFF2A2D3A, BORDER = 0xFFDCD6C4, INNER = 0xFF3A3F50,
             ROW = 0x40FFFFFF, TAB_BG = 0xFF30333F, TAB_EDGE = 0xFF8A8FA2, TAB_TEXT = 0xFFE4E0D4,
             GOLD_A = 0xFFE7C66C, GOLD_B = 0xFFB98E2E, GOLD_EDGE = 0xFFF6E2A0, GOLD_INK = 0xFF2B1D02,

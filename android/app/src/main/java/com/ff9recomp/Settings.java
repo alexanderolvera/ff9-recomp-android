@@ -34,7 +34,7 @@ final class Settings {
         new Option("start", "Start", "Continue: straight back to the place you were last (Memoria's autosave), skipping the title.", 0,
                 "Title screen", "Continue"),
         new Option("resolution", "Resolution", "Lower draws fewer pixels: cooler and longer battery, softer picture. The screen scales it up for free.", 0,
-                "Full", "75%", "50%"),
+                "Full", "75%", "50%", "25%"),
         new Option("widescreen", "Widescreen", "Fields and battles fill a 16:9 screen.", 1),
         new Option("skip_intros", "Skip logos", "Straight to the title screen.", 1),
         new Option("speed", "Speed-up booster", "How fast the game runs while the High Speed booster is on.", 1,
@@ -106,7 +106,27 @@ final class Settings {
         put(lines, "AnalogControl", "Enabled", on(c, "analog_run"));
         put(lines, "Audio", "MusicVolume", String.valueOf(get(c, find("music_volume")) * 25));
         put(lines, "Audio", "SoundVolume", String.valueOf(get(c, find("sound_volume")) * 25));
-        Files.write(ini.toPath(), lines, StandardCharsets.ISO_8859_1);
+        writeIni(ini, lines);
+    }
+
+    static void writeIni(File ini, List<String> lines) throws IOException {
+        writeIni(ini, (String.join("\n", lines) + "\n").getBytes(StandardCharsets.ISO_8859_1));
+    }
+
+    /** Writes Memoria.ini. One saved by a file manager or a PC (GitHub issue 9) can belong to
+     *  another app and be read-only to this one: then a new file takes its place (the folder is
+     *  this app's, so it can remove the old one). */
+    static void writeIni(File ini, byte[] b) throws IOException {
+        try {
+            Files.write(ini.toPath(), b);
+            return;
+        } catch (IOException e) {
+            File tmp = new File(ini.getPath() + ".new");
+            Files.write(tmp.toPath(), b);
+            if (ini.exists() && !ini.delete()) { tmp.delete(); throw new IOException("cannot replace " + ini.getName() + ": " + e.getMessage()); }
+            if (!tmp.renameTo(ini)) throw new IOException("cannot write " + ini.getName());
+            android.util.Log.i("FF9Recomp", "replaced " + ini.getName() + " (" + e + ")");
+        }
     }
 
     private static String on(Context c, String key) { return get(c, find(key)) != 0 ? "1" : "0"; }

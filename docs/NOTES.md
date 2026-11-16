@@ -234,3 +234,24 @@
   resumes at 51 MB of 87, and the SHA-256 check passes. The queue: Pause, then force-stop, then it
   is still paused after the restart, then Continue resumes it. A move to the SD card wasn't tried
   (the card is full), and neither was the import (it needs the folder picker).
+
+## GitHub issues 8-13 (0.1.4)
+
+- Memoria.ini saved by a file manager or a PC can belong to another app and be read-only to this
+  one (adb push reproduces it: owner shell, mode 644). `Settings.writeIni` then writes a new file
+  in its place (the folder is the app's). Settings > Memoria > Edit Memoria.ini edits it in place.
+- A mod folder copied in by hand (ModDescription.xml, or StreamingAssets / FF9_Data inside) is
+  listed on the Mods page, so it can be turned on without editing FolderNames.
+- `ReflectionProbe.texture` was null: Memoria's battle Toon/Realism shaders wait for it in
+  HonoluluBattleMain.UpdateAmbientLight and read its name (NullReferenceException, issue 13).
+  A white texture stands in. Not yet seen in a battle on the Thor.
+- Second screen background pure black (the CRT filter over the old dark blue showed lines).
+- Resolution 25%.
+- Seen, not fixed: a dialog's box goes 1-2 frames before its text when it closes (issue 12):
+  DialogAnimator.StartHideDialog shrinks the body sprite and the clip panel's baseClipRegion,
+  but the phrase label is not clipped; the Hidden/... clip shaders are all found.
+- Debug switches: FF9_TRACE_EXCEPTIONS=1 (every exception as thrown, caught or not),
+  FF9_TEST_SAVEUI=1 (the Save/Load screen's state when it changes). Coroutines whose object is
+  inactive or destroyed are logged once (TODO lines).
+- The Thor's SavedData_ww.dat currently has no saves in slots 1-2 (test_load 1:2 gives ok=False;
+  the Load screen shows nothing for those slots): load from Continue (the autosave) instead.

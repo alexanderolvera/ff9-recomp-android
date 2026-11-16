@@ -171,7 +171,7 @@ final class MemoriaInstall {
         if (oldIni != null) {
             String merged = mergeIni(new String(Files.readAllBytes(ini.toPath()), StandardCharsets.ISO_8859_1),
                     new String(oldIni, StandardCharsets.ISO_8859_1));
-            Files.write(ini.toPath(), merged.getBytes(StandardCharsets.ISO_8859_1));
+            Settings.writeIni(ini, merged.getBytes(StandardCharsets.ISO_8859_1));
         }
         Log.i(TAG, "installed Memoria " + VERSION + ": " + n[0] + " files");
     }

@@ -43,6 +43,7 @@ public static class TextInput {
             object? sel = selection!.GetValue(null);
             if (!ReferenceEquals(sel, shown)) {
                 shown = sel;
+                Log.Info(sel != null ? $"text field selected: {(sel as UnityEngine.Component)?.gameObject.name}" : "text field let go");
                 if (sel != null) ff9_text_open(value!.GetValue(sel) as string ?? "");
                 else ff9_text_close();
             }

@@ -61,6 +61,10 @@ public static class Player {
     public static int Main(string[] args) {
         Native.DllImports.Install();
         Native.Compat.Install();
+        // FF9_TRACE_EXCEPTIONS=1 (files/env.txt): every exception as it is thrown, caught or not
+        // (the game's save code catches its own and only reports a failure)
+        if (Environment.GetEnvironmentVariable("FF9_TRACE_EXCEPTIONS") != null)
+            AppDomain.CurrentDomain.FirstChanceException += (s, e) => Log.Info("thrown: " + e.Exception.GetType().Name + ": " + e.Exception.Message + "\n" + e.Exception.StackTrace);
         PollInput = () => { Touches.WasDown = Touches.Down; Icalls.Pad.Poll(); };
         Gfx.Textures.Register(); Gfx.Shaders.Register(); Gfx.Materials.Register(); Gfx.Meshes.Register();
         Gfx.Sprites.Register(); Gfx.RendererComponents.Register(); Gfx.Cameras.Register(); Assets.TextAssets.Register(); Physics.Colliders.Register(); Gfx.Canvases.Register(); Text.Fonts.Register(); Anim.Clips.Register(); Anim.Animations.Register();

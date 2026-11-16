@@ -238,7 +238,23 @@ final class ModCatalog {
         List<String> out = new ArrayList<>();
         for (String f : enabled(c)) if (new File(game(c), f).isDirectory()) out.add(f);
         for (Mod m : mods(c)) if (installed(c, m) && !containsIgnoreCase(out, m.folder)) out.add(m.folder);
+        // a mod copied in by hand (GitHub issue 9): a folder laid out as Memoria's mods are
+        File[] dirs = game(c).listFiles(File::isDirectory);
+        if (dirs != null) {
+            java.util.Arrays.sort(dirs);
+            for (File d : dirs) if (looksLikeMod(d) && !containsIgnoreCase(out, d.getName())) out.add(d.getName());
+        }
         return out;
+    }
+
+    private static final List<String> GAME_DIRS = java.util.Arrays.asList(
+            "StreamingAssets", "FF9_Data", "x64", "x86", "SaveData", "cache", "persistent", "Debugger", "Licenses");
+
+    /** A mod folder: it has a ModDescription.xml, or the game's own folders to put files over. */
+    private static boolean looksLikeMod(File d) {
+        if (containsIgnoreCase(GAME_DIRS, d.getName()) || d.getName().startsWith(".")) return false;
+        return new File(d, "ModDescription.xml").isFile() || new File(d, "StreamingAssets").isDirectory()
+                || new File(d, "FF9_Data").isDirectory();
     }
 
     private static boolean containsIgnoreCase(List<String> l, String s) {
@@ -468,7 +484,7 @@ final class ModCatalog {
         Settings.put(lines, "Mod", "FolderNames", quoted(names));
         Settings.put(lines, "Mod", "Priorities", quoted(prios));
         Settings.put(lines, "Mod", "ActiveSubMods", quoted(active));
-        Files.write(new File(game, "Memoria.ini").toPath(), lines, StandardCharsets.ISO_8859_1);
+        Settings.writeIni(new File(game, "Memoria.ini"), lines);
     }
 
     private static void addSub(List<String> names, File game, String folder, SubMod s, Set<String> act) {

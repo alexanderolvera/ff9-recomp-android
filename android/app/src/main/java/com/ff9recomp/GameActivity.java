@@ -52,7 +52,7 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         if (res > 0) {
             android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
             getDisplay().getRealMetrics(dm);
-            float f = res == 1 ? 0.75f : 0.5f;
+            float f = res == 1 ? 0.75f : res == 2 ? 0.5f : 0.25f;
             int lw = Math.max(dm.widthPixels, dm.heightPixels), lh = Math.min(dm.widthPixels, dm.heightPixels);
             v.getHolder().setFixedSize(Math.round(lw * f) & ~1, Math.round(lh * f) & ~1);
         }

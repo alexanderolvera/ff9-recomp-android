@@ -204,7 +204,28 @@ public static class DebugDump {
         } catch (Exception e) { Console.WriteLine("il dump failed: " + e); }
     }
 
+    static readonly bool saveUiProbe = Environment.GetEnvironmentVariable("FF9_TEST_SAVEUI") != null;
+    static string lastSaveUi = "";
+
+    /// FF9_TEST_SAVEUI=1: the Save/Load screen's state, when it changes.
+    static void SaveUi() {
+        const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+        try {
+            var asm = typeof(FF9StateSystem).Assembly;
+            var ui = typeof(PersistenSingleton<>).MakeGenericType(asm.GetType("UIManager")!).GetProperty("Instance")!.GetValue(null)!;
+            object? scene = ui.GetType().GetField("SaveLoadScene", F)?.GetValue(ui);
+            var bgs = asm.GetType("ButtonGroupState")!;
+            string group = bgs.GetProperty("ActiveGroup", F)?.GetValue(null) as string ?? "null";
+            var btn = bgs.GetProperty("ActiveButton", F)?.GetValue(null) as UnityEngine.GameObject;
+            string s = scene == null ? "no scene" : $"active={((UnityEngine.Behaviour)scene).isActiveAndEnabled} loading={asm.GetType("UIScene")!.GetField("isLoading", F)!.GetValue(scene)} group={group} button={btn?.name}";
+            var prev = scene?.GetType().GetField("LoadingPreviewDialog", F)?.GetValue(scene) as UnityEngine.GameObject;
+            s += $" previewDialog={prev?.activeSelf} uiState={ui.GetType().GetProperty("State", F)?.GetValue(ui)}";
+            if (s != lastSaveUi) { lastSaveUi = s; Log.Info("save ui: " + s); }
+        } catch (Exception e) { Log.Info("save ui probe: " + e.Message); }
+    }
+
     public static void Tick() {
+        if (saveUiProbe && Clock.Frame % 10 == 0) SaveUi();
         if (Clock.Frame == 2) IlDump();
         if (warpWorld != null && int.TryParse(warpWorld.Split(':')[0], out int wf) && Clock.Frame == wf)
             try { WarpWorld(); } catch (Exception e) { Console.WriteLine("warp failed: " + e); }

@@ -83,7 +83,10 @@ static class SmallIcalls {
     [Icall("UnityEngine.ReflectionProbe::INTERNAL_set_backgroundColor")] static void RpBg(ReflectionProbe p, ref Color c) { }
     [Icall("UnityEngine.ReflectionProbe::INTERNAL_set_size")] static void RpSize(ReflectionProbe p, ref Vector3 v) { }
     [Icall("UnityEngine.ReflectionProbe::RenderProbe")] static int RpRender(ReflectionProbe p, RenderTexture t) => 0;
-    [Icall("UnityEngine.ReflectionProbe::get_texture")] static Texture? RpTex(ReflectionProbe p) => null;
+    // No probe is rendered: a white one stands in. Memoria's battle shaders (Toon, Realism) wait in
+    // HonoluluBattleMain.UpdateAmbientLight for the probe's texture and read its name: null threw
+    // there and the battle never started (GitHub issue 13).
+    [Icall("UnityEngine.ReflectionProbe::get_texture")] static Texture RpTex(ReflectionProbe p) => Textures.ManagedWhite;
     [Icall("UnityEngine.ReflectionProbe::set_clearFlags")] static void RpClear(ReflectionProbe p, UnityEngine.Rendering.ReflectionProbeClearFlags f) { }
     [Icall("UnityEngine.ReflectionProbe::set_cullingMask")] static void RpMask(ReflectionProbe p, int m) { }
     [Icall("UnityEngine.ReflectionProbe::set_mode")] static void RpMode(ReflectionProbe p, UnityEngine.Rendering.ReflectionProbeMode m) { }

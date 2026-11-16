@@ -114,8 +114,14 @@ public static class Coroutines {
         for (int i = 0; i < n; i++) {
             var c = active[i];
             if (c.Done) continue;
-            if (c.Owner.Managed is null || Registry.Get(c.Owner.Managed) == null) { Finish(c); continue; }
-            if (!c.Owner.GameObject.ActiveInHierarchy) continue;
+            if (c.Owner.Managed is null || Registry.Get(c.Owner.Managed) == null) {
+                Log.Once("codead:" + c.Owner.Managed?.GetType().Name, $"coroutine of a destroyed {c.Owner.Managed?.GetType().Name} dropped");
+                Finish(c); continue;
+            }
+            if (!c.Owner.GameObject.ActiveInHierarchy) {
+                Log.Once("coinactive:" + c.Owner.Managed.GetType().Name, $"coroutine of {c.Owner.Managed.GetType().Name} waits: its object is inactive");
+                continue;
+            }
             if (Ready(c, phase)) Step(c);
         }
         active.RemoveAll(c => c.Done);
