@@ -422,6 +422,20 @@ final class ModCatalog {
 
     private static String key(String s) { return s.replace('\\', '/').toLowerCase(java.util.Locale.ROOT); }
 
+    /** A mod copied into the game folder by hand (GitHub issue 15): what its own ModDescription.xml
+     *  says (name, author, description, options), else just its folder's name. The folder is the
+     *  one it is in, whatever the file calls it; it has no download. */
+    static Mod handMod(Context c, String folder) {
+        Mod m = description(c, folder);
+        if (m == null) { m = new Mod(); m.name = folder; }
+        if (m.name.isEmpty()) m.name = folder;
+        m.folder = folder;
+        m.url = "";
+        if (!m.preview.startsWith("http")) m.preview = "";
+        if (!m.website.startsWith("http")) m.website = "";
+        return m;
+    }
+
     /** The mod's own ModDescription.xml, or null. */
     private static Mod description(Context c, String folder) {
         try {

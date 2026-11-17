@@ -112,9 +112,28 @@ public sealed class NMaterialBlock {
 public static class RendererComponents {
     public static readonly List<NRenderer> All = new();
 
+    static Material? defaultSprite;
+    static bool defaultSpriteTried;
+
+    static Material? DefaultSpriteMaterial() {
+        if (defaultSprite is not null && Registry.Get(defaultSprite) != null) return defaultSprite;
+        if (defaultSpriteTried && defaultSprite is null) return null;
+        defaultSpriteTried = true;
+        var sh = Shader.Find("Sprites/Default");
+        if (sh == null) { Log.Warn("no Sprites/Default shader for added SpriteRenderers"); return null; }
+        defaultSprite = new Material(sh) { name = "Sprites-Default" };
+        return defaultSprite;
+    }
+
     public static void Register() {
         Components.Factories[ClassIds.MeshRenderer] = () => Track(new NMeshRenderer());
         Components.Factories[ClassIds.SpriteRenderer] = () => Track(new NSpriteRenderer());
+        // AddComponent<SpriteRenderer>() comes with Unity's default sprite material: Tetra Master's
+        // card cursor builds its frames that way, and with no material they were never drawn
+        // (GitHub issue 16: no cursor in the card game)
+        Icalls.ComponentEvents.Added += c => {
+            if (c is NSpriteRenderer s && s.Materials.Length == 0 && DefaultSpriteMaterial() is { } m) s.Materials = new Material?[] { m };
+        };
         Components.Factories[137] = () => Track(new NSkinnedMeshRenderer());
         Components.Factories[ClassIds.MeshFilter] = () => new NMeshFilter();
         SceneBuilder.ComponentReaders[ClassIds.MeshRenderer] = (c, r, b) => ReadRenderer((NRenderer)c, r, b);

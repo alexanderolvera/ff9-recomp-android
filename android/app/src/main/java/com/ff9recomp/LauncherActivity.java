@@ -362,7 +362,7 @@ public class LauncherActivity extends Activity {
         { "Display", "resolution", "widescreen", "skip_intros", "crt_filter", "show_fps" },
         { "Game", "start", "boosters", "speed", "turbo_dialog" },
         { "Controls", "swap_confirm", "analog_run", "touch_controls", "rumble" },
-        { "Screens", "bottom_screen", "bottom_buttons", "swap_screens" },
+        { "Screens", "bottom_screen", "bottom_buttons", "panel_dim", "swap_screens" },
         { "Sound", "menu_sounds", "music_volume", "sound_volume" },
     };
 
@@ -602,16 +602,18 @@ public class LauncherActivity extends Activity {
     /** An installed mod: on/off, its place in the load order, Update, Remove, details. */
     private View installedRow(String folder, List<String> on, int index) {
         ModCatalog.Mod m = ModCatalog.byFolder(this, folder);
+        // one copied in by hand: its own ModDescription.xml gives the name, options and Info (issue 15)
+        ModCatalog.Mod shown = m != null ? m : ModCatalog.handMod(this, folder);
         boolean enabled = on.stream().anyMatch(folder::equalsIgnoreCase);
         int pos = -1;
         for (int i = 0; i < on.size(); i++) if (on.get(i).equalsIgnoreCase(folder)) pos = i;
         LinearLayout r = row();
         r.setGravity(Gravity.CENTER_VERTICAL);
         CheckBox cb = new CheckBox(this);
-        String name = m != null ? m.name : folder;
+        String name = shown.name;
         String ver = m == null ? "added by hand" : ModCatalog.installedVersion(this, m).isEmpty() ? "" : "v" + ModCatalog.installedVersion(this, m);
         if (m != null && ModCatalog.updatable(this, m)) ver += (ver.isEmpty() ? "" : ", ") + "update " + m.version;
-        int opts = m != null ? ModCatalog.choiceCount(this, folder) : 0;
+        int opts = ModCatalog.choiceCount(this, folder);
         if (opts > 0) ver += (ver.isEmpty() ? "" : ", ") + opts + " options under Info";
         cb.setText(withNote((enabled ? (pos + 1) + ".  " : "") + name, ver));
         cb.setChecked(enabled);
@@ -631,13 +633,11 @@ public class LauncherActivity extends Activity {
             r.addView(up);
             r.addView(dn);
         }
-        if (m != null) {
-            if (ModCatalog.updatable(this, m) && DownloadQueue.get(this).pending(m) == null)
-                r.addView(small("Update", v -> queueMods(java.util.Collections.singletonList(m))));
-            Button info = small("Info", v -> { modShown = m; modBack = "mods"; show("mod"); });
-            info.setTag("focus:info:" + folder);
-            r.addView(info);
-        }
+        if (m != null && ModCatalog.updatable(this, m) && DownloadQueue.get(this).pending(m) == null)
+            r.addView(small("Update", v -> queueMods(java.util.Collections.singletonList(m))));
+        Button info = small("Info", v -> { modShown = shown; modBack = "mods"; show("mod"); });
+        info.setTag("focus:info:" + folder);
+        r.addView(info);
         Button rm = small("Remove", v -> confirmRemove(folder, m));
         rm.setTag("focus:rm:" + folder);
         r.addView(rm);

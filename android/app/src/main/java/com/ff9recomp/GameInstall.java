@@ -199,6 +199,8 @@ final class GameInstall {
                 File out = new File(runtime, e.getName());
                 if (e.isDirectory()) { out.mkdirs(); continue; }
                 out.getParentFile().mkdirs();
+                // a file the app may not write (copied in by another app or over USB): replaced
+                if (out.exists() && !out.canWrite()) out.delete();
                 try (OutputStream o = new FileOutputStream(out)) { int n; while ((n = z.read(buf)) > 0) o.write(buf, 0, n); }
             }
         }

@@ -3,6 +3,7 @@
 // slot and file are 0-based (the screen's "slot 2" / "FILE03" are 1 / 2). Reflection: the game's
 // delegate and enum types are built against the old mscorlib.
 using System;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -48,10 +49,43 @@ public static class TestLoad {
         } catch (Exception e) { Log.Warn("test save failed: " + e); }
     }
 
+    // FF9_TEST_QUADMIST=opponent (tests): once a field has been up for 300 frames, a game of
+    // Tetra Master against that opponent, as a card player's event does (SetMiniGame, then the
+    // QuadMist scene).
+    static readonly string? quadmist = Environment.GetEnvironmentVariable("FF9_TEST_QUADMIST");
+    static bool quadmistDone;
+    static long qmSince = -1;
+
+    static string? qmState;
+
+    static void TestQuadMist() {
+        // the card game's state as it changes (the coin toss, whose turn, ...)
+        if (quadmist != null && Player.LastSceneLoaded == "QuadMist" && Clock.Frame % 15 == 0)
+            foreach (var b in Player.Behaviours.ToArray())
+                if (b.Managed?.GetType() is { Name: "QuadMistGame" } ty) {
+                    string st = string.Join(" ", new[] { "StartState", "GameState", "PlayState", "yourTurn" }.Select(n => n + "=" + ty.GetField(n, F)?.GetValue(b.Managed)));
+                    if (st != qmState) Log.Info("tetra master: " + st);
+                    qmState = st;
+                }
+        if (quadmist == null || quadmistDone) return;
+        if (Player.LastSceneLoaded != "FieldMap") { qmSince = -1; return; }
+        if (qmSince < 0) { qmSince = Clock.Frame; return; }
+        if (Clock.Frame - qmSince < 300) return;
+        quadmistDone = true;
+        try {
+            T("EventService").GetMethod("SetMiniGame", F)!.Invoke(null, new object[] { ushort.Parse(quadmist) });
+            var dir = T("Assets.Scripts.Common.SceneDirector");
+            var replace = Array.Find(dir.GetMethods(F), m => m.Name == "Replace" && m.GetParameters().Length == 3)!;
+            replace.Invoke(null, new[] { "QuadMist", Enum.ToObject(replace.GetParameters()[1].ParameterType, 1), (object)true });
+            Log.Info("test: Tetra Master against " + quadmist);
+        } catch (Exception e) { Log.Warn("test quadmist failed: " + e); }
+    }
+
     static void Saved(object err, bool ok) => Log.Info($"test save finished: {err} ok={ok}");
 
     public static void Tick() {
         TestSave();
+        TestQuadMist();
         if (autoload && !autoloadDone) {
             if (Player.LastSceneLoaded != "Title") titleSince = -1;
             else if (titleSince < 0) titleSince = Clock.Frame;

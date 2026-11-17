@@ -291,3 +291,36 @@ Memoria cheats. Each choice is a set of Section.Key=value writes; a section with
 the section otherwise. A file set by hand to other values shows "Custom". Not here: what
 Settings.apply writes at each Play (frame rate, widescreen, skip logos, boosters, speed, fast
 dialog, swap confirm, analog walk, volumes). Edit Memoria.ini stays for everything else.
+
+## GitHub issues 6, 12, 14-16 (0.1.8)
+
+- Coroutine timing (Scripting/Coroutines.cs): a coroutine started from a script's Update ran to its
+  first `yield return null` and was then resumed in the same frame's coroutine pass. Unity resumes
+  it on the next frame. Tetra Master's coin toss switches the coin on, yields, then uses what the
+  coin's Start sets; Start had not run, the toss threw and the match stalled (issue 16). Yields made
+  outside a pass now wait for the next frame's Update pass.
+- AddComponent<SpriteRenderer>() gets a "Sprites/Default" material, as in Unity (Gfx/Renderers.cs).
+  Tetra Master's card cursor builds its frames that way; with no material they were never drawn.
+  The board/hand QuadMistCursor's SpriteSheet has null sprites in the game files: it shows nothing
+  on PC either; the cursor players see is QuadMistCardCursor.
+- Music stopped after one play-through (issue 16): Memoria calls Soloud_setLoopStartPoint and
+  Soloud_setLoopEndPoint on a voice, never setLooping; its soloud.dll loops a voice given a loop
+  start. src/host/soloud_ext.cpp now does too. FF9_TRACE_MUSIC=1 logs the voices every 5 s.
+- Menu sounds late or skipped when scrolling (issue 12): SoLoud's miniaudio backend turned Memoria's
+  automatic buffer size into 2048 frames (43 ms, sounds start on buffer boundaries); 512 now
+  (patches/soloud-android-buffer.sh).
+- Naming screen (issue 6): OK in the keyboard box sends "\u0001" + text; TextInput sets the name and
+  calls NameSettingUI.OnConfirmButtonClick. Tapping the game's own Confirm selected the name field
+  again. FF9_TEST_NAMING no longer reads UIManager.Instance before a field is up (that made a stray
+  UIManager whose scenes were never set, and the game stopped at the splash).
+- Second screen: GameActivity hides the panels' Presentation in onStop and shows it again in
+  onStart (Home left them on the bottom screen). Settings > Screens > Dim the panels in cutscenes.
+- Mods copied in by hand (issue 15): ModCatalog.handMod reads the folder's own ModDescription.xml
+  for the name, options and the Info page.
+- GameInstall.extractRuntime deletes a runtime file it may not write before unpacking (an engine
+  DLL pushed over adb is owned by shell).
+- FF9_TEST_QUADMIST=opponent: a Tetra Master game 300 frames after a field is up; logs the game's
+  state as it changes.
+- The Lost Chapters (issue 14) patches the game at run time with HarmonyLib; AccessTools' static
+  constructor fails here (MethodInvoker.GetHandler), and the game later dies with signal 11.
+  Not supported.

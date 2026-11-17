@@ -156,6 +156,7 @@ public static class Player {
         DebugDump.Tick();
         Companion.Tick();
         UiSounds.Tick();
+        MusicTrace.Tick();
         TestLoad.Tick();
         TextInput.Tick();
         Widescreen.Tick();

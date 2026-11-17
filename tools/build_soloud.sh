@@ -17,6 +17,10 @@ if [ ! -f $SL/.patched ]; then
   bash patches/soloud-loop-end.sh $SL
   touch $SL/.patched
 fi
+if [ ! -f $SL/.patched-buffer ]; then
+  bash patches/soloud-android-buffer.sh $SL
+  touch $SL/.patched-buffer
+fi
 srcs=$(ls $SL/src/core/*.cpp $SL/src/audiosource/wav/*.cpp $SL/src/audiosource/wav/*.c $SL/src/filter/*.cpp \
           $SL/src/backend/miniaudio/*.cpp $SL/src/c_api/soloud_c.cpp \
           $SL/src/audiosource/{ay,monotone,noise,sfxr,speech,tedsid,vic,vizsn}/*.cpp $SL/src/audiosource/openmpt/*.c* 2>/dev/null)

@@ -2,8 +2,8 @@
 // the name is typed on the keyboard (Input.inputString); a phone has none. While a field is
 // selected its text goes to the host (ff9_text_open), the APK shows Android's keyboard in a dialog
 // when no controller is connected (GameActivity), and the typed text comes back (ff9_text_take):
-// it goes into the field through its own validation, and the field lets go of the focus, so the
-// next Confirm accepts the name as the game does. With a controller, Confirm twice keeps the
+// it goes into the field through its own validation, the field lets go of the focus, and OK in
+// the box confirms the name as the game's Confirm does (Cancel leaves the screen as it was). With a controller, Confirm twice keeps the
 // default name and Menu brings it back, as on PC.
 //
 // FF9_TEST_NAMING=character (tests): opens the naming screen for that character (0 Zidane) once a
@@ -51,13 +51,27 @@ public static class TextInput {
             int n = ff9_text_take(buf, buf.Length);
             if (n < 0) return;
             string text = Encoding.UTF8.GetString(buf, 0, n);
+            // OK in the keyboard's box (a leading ) also confirms the name: tapping the
+            // game's Confirm selected the field again instead (GitHub issue 6, a Fold)
+            bool confirm = text.StartsWith('');
+            if (confirm) text = text[1..];
             value!.SetValue(sel, text);
-            Log.Info($"text field: \"{value.GetValue(sel)}\" from the keyboard");
+            Log.Info($"text field: \"{value.GetValue(sel)}\" from the keyboard{(confirm ? ", confirmed" : "")}");
             removeFocus?.Invoke(sel, null);
+            if (confirm) ConfirmName();
         } catch (Exception e) {
             failed = true;
             Log.Warn("text input: " + e);
         }
+    }
+
+    /// The naming screen's Confirm (NameSettingUI.OnConfirmButtonClick), when it is the one open.
+    static void ConfirmName() {
+        var asm = typeof(FF9StateSystem).Assembly;
+        var ui = typeof(PersistenSingleton<>).MakeGenericType(asm.GetType("UIManager")!).GetProperty("Instance")!.GetValue(null);
+        var scene = ui?.GetType().GetField("NameSettingScene", F)?.GetValue(ui) as UnityEngine.Component;
+        if (scene == null || !scene.gameObject.activeInHierarchy) return;
+        scene.GetType().GetMethod("OnConfirmButtonClick", F)?.Invoke(scene, null);
     }
 
     static readonly string? namingTest = Environment.GetEnvironmentVariable("FF9_TEST_NAMING");
@@ -66,6 +80,8 @@ public static class TextInput {
 
     static void TestNaming() {
         if (namingTest == null || namingDone) return;
+        // a field first: UIManager.Instance read before the game made its own makes a stray one
+        if (Player.LastSceneLoaded != "FieldMap") { hudSince = -1; return; }
         var ui = typeof(PersistenSingleton<>).MakeGenericType(typeof(FF9StateSystem).Assembly.GetType("UIManager")!).GetProperty("Instance")!.GetValue(null);
         string? state = ui?.GetType().GetProperty("State", F)?.GetValue(ui)?.ToString();
         if (Player.LastSceneLoaded != "FieldMap" || state != "FieldHUD") { hudSince = -1; return; }

@@ -8,7 +8,13 @@
 using namespace SoLoud;
 
 extern "C" {
-__attribute__((visibility("default"))) void Soloud_setLoopStartPoint(void *s, unsigned int h, double t) { ((Soloud *)s)->setLoopPoint(h, t); }
+// Memoria sets a loop region only on the music and effects that loop, and never calls setLooping:
+// in its soloud.dll the loop start also makes the voice loop. Without that the music played once
+// and stopped (a field's track went silent after a minute or two: GitHub issue 16).
+__attribute__((visibility("default"))) void Soloud_setLoopStartPoint(void *s, unsigned int h, double t) {
+    ((Soloud *)s)->setLoopPoint(h, t);
+    ((Soloud *)s)->setLooping(h, true);
+}
 
 __attribute__((visibility("default"))) void Soloud_setLoopEndPoint(void *s, unsigned int h, double t) {
     auto *so = (Soloud *)s;

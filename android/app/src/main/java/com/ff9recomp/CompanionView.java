@@ -98,7 +98,7 @@ public class CompanionView extends View {
     private static final float DIM_MAX = 0.85f;
     private static final long DIM_HOLD_IN = 250, DIM_HOLD_OUT = 400, DIM_IN_MS = 1200, DIM_OUT_MS = 700;
     private float dim;
-    private boolean dimTarget, seenCine;
+    private boolean dimTarget, seenCine, dimOn = true;
     private long seenSince;
     private android.animation.ValueAnimator dimAnim;
 
@@ -110,7 +110,7 @@ public class CompanionView extends View {
                 try { state = new JSONObject(s); } catch (Exception ignored) { }
                 invalidate();
             }
-            updateDim(state.optInt("cine") == 1);
+            updateDim(dimOn && state.optInt("cine") == 1);
             if (flash != null && SystemClock.uptimeMillis() > flashUntil) { flash = null; invalidate(); }
             if (GuideInstaller.busy || System.currentTimeMillis() < GuideInstaller.statusUntil) invalidate();   // its progress
             handler.postDelayed(this, 100);
@@ -123,6 +123,7 @@ public class CompanionView extends View {
         setHapticFeedbackEnabled(true);
         prefs = Settings.prefs(c);
         deck = prefs.getBoolean("bottom_buttons", true);
+        dimOn = prefs.getBoolean("panel_dim", true);   // Settings > Screens (GitHub issue 16)
         tab = Math.max(0, Math.min(TAB_EXTRA, prefs.getInt("deck_tab", TAB_AUTO)));
         partyHidden = prefs.getBoolean("deck_party_hidden", false);
     }

@@ -306,8 +306,8 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
     static native void nativeTextReply(String text);
     private android.app.AlertDialog textDialog;
 
-    /** Android's keyboard for the game's selected text field. OK puts the text in the field and the
-     *  next Confirm accepts it; Cancel keeps what was there (Cancel in the game opens this again). */
+    /** Android's keyboard for the game's selected text field. OK puts the text in the field and
+     *  confirms it (GitHub issue 6); Cancel keeps what was there (Cancel in the game opens this again). */
     private void showTextDialog(String current) {
         if (textDialog != null) textDialog.dismiss();
         android.widget.EditText e = new android.widget.EditText(this);
@@ -323,13 +323,13 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         android.app.AlertDialog d = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Name")
                 .setView(box)
-                .setPositiveButton("OK", (x, w) -> nativeTextReply(e.getText().toString()))
+                .setPositiveButton("OK", (x, w) -> nativeTextReply("" + e.getText().toString()))   // : OK confirms the name
                 .setNegativeButton("Cancel", (x, w) -> nativeTextReply(current))
                 .setOnCancelListener(x -> nativeTextReply(current))
                 .create();
         e.setOnEditorActionListener((v, action, ev) -> {
             if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
-            nativeTextReply(e.getText().toString());
+            nativeTextReply("" + e.getText().toString());
             d.dismiss();
             return true;
         });
@@ -477,6 +477,35 @@ public class GameActivity extends Activity implements SurfaceHolder.Callback {
         } catch (java.io.IOException e) {
             Log.w(TAG, "display.txt: " + e);
         }
+    }
+
+    // Home (or any switch away from the game): the panels go with it. A Presentation belongs to
+    // the activity but stays on its display when the activity is stopped, so the bottom screen
+    // kept showing them over Android's home screen (GitHub issue 16).
+    private boolean panelsHidden, guideTabHidden, hostSentBack;
+
+    @Override
+    protected void onStop() {
+        if (companion != null && companion.isShowing()) { companion.hide(); panelsHidden = true; }
+        if (guideTab != null && guideTab.isShowing()) { guideTab.hide(); guideTabHidden = true; }
+        if (companionHost != null && !companionHost.isFinishing()) { companionHost.moveTaskToBack(true); hostSentBack = true; }
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (panelsHidden && companion != null) companion.show();
+        if (guideTabHidden && guideTab != null) guideTab.show();
+        if (hostSentBack && companionHost != null && !companionHost.isFinishing()) {
+            try {
+                android.app.ActivityOptions o = android.app.ActivityOptions.makeBasic();
+                o.setLaunchDisplayId(android.view.Display.DEFAULT_DISPLAY);
+                startActivity(new android.content.Intent(this, CompanionHostActivity.class)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION), o.toBundle());
+            } catch (RuntimeException e) { Log.w(TAG, "panels not brought back: " + e); }
+        }
+        panelsHidden = guideTabHidden = hostSentBack = false;
     }
 
     @Override

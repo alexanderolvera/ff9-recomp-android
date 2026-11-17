@@ -45,6 +45,7 @@ final class Settings {
         new Option("analog_run", "Analog walk and run", "Walk or run by how far the stick is pushed.", 1),
         new Option("bottom_screen", "Second screen panels", "On two-screen devices: party HP/MP, ATB, enemies and gil on the second screen. Off leaves it to other apps.", 1),
         new Option("bottom_buttons", "Second screen buttons", "The command deck under the panels: Menu, Save, Load, Speed, Battles, Battle+.", 1),
+        new Option("panel_dim", "Dim the panels in cutscenes", "The second screen darkens while a scene plays and you have no control, and brightens when you have it again.", 1),
         new Option("swap_screens", "Swap screens", "The game on the second screen and the panels on the main one (for devices whose main screen is the small one).", 0),
         new Option("touch_controls", "Touch controls", "Auto: on screen only when no controller is connected.", 0,
                 "Auto", "Always", "Never"),

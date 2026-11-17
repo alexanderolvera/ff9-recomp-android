@@ -203,7 +203,10 @@ public static class AssetDB {
 public sealed class AssetResolver : IPPtrResolver {
     public UObject? Resolve(SerializedFile file, int fileId, long pathId, Type expected) {
         var f = AssetDB.External(file, fileId);
-        return f == null ? null : AssetDB.Load(f, pathId);
+        var o = f == null ? null : AssetDB.Load(f, pathId);
+        if (o == null && Environment.GetEnvironmentVariable("FF9_TRACE_PPTR") != null)
+            Log.Once($"pptr{file.Name}:{fileId}", $"unresolved {expected.Name} in {file.Name}: file {fileId} ({f?.Name ?? "not found"}) path {pathId}");
+        return o;
     }
 }
 

@@ -27,6 +27,7 @@ public sealed class CoroutineState {
     public float WaitUntil;
     public bool Done;
     public long Seq;        // when it last yielded: coroutines resume in that order, as Unity's do
+    public long YieldFrame = -1;   // the frame it yielded in, when that was outside a coroutine pass
     public Coroutine? Handle;
     public string? Name;
     public readonly List<CoroutineState> Waiters = new();
@@ -37,6 +38,7 @@ public static class Coroutines {
     static readonly Dictionary<int, CoroutineState> byId = new();
     static int nextId = 1;
     static long yieldSeq;
+    static bool inPass;
 
     public static Coroutine Start(NMonoBehaviour owner, IEnumerator e) {
         var c = new CoroutineState { Id = nextId++, Owner = owner, Root = e };
@@ -88,6 +90,11 @@ public static class Coroutines {
                 default:
                     c.Seq = ++yieldSeq;
                     c.Wait = y;     // null, WaitForEndOfFrame, WaitForFixedUpdate, Coroutine, AsyncOperation, WWW...
+                    // started by a script's Update (StartCoroutine runs it to its first yield): as
+                    // in Unity, the next frame's pass resumes it, not this frame's. Tetra Master's
+                    // coin toss switches the coin on, yields, and then uses what the coin's Start
+                    // sets; resumed in the same frame, Start had not run yet (GitHub issue 16)
+                    c.YieldFrame = inPass ? -1 : Clock.Frame;
                     return;
             }
         }
@@ -95,6 +102,7 @@ public static class Coroutines {
     }
 
     static bool Ready(CoroutineState c, Phase phase) {
+        if (phase == Phase.Update && c.YieldFrame == Clock.Frame && c.Wait is not (WaitForEndOfFrame or WaitForFixedUpdate)) return false;
         switch (c.Wait) {
             case null: return phase == Phase.Update;
             case WaitForSeconds: return phase == Phase.Update && Clock.Now >= c.WaitUntil;
@@ -122,6 +130,12 @@ public static class Coroutines {
         // files opened, then nothing worked: issue 10, Reddit)
         var order = active.GetRange(0, n);
         order.Sort((a, b) => a.Seq.CompareTo(b.Seq));
+        inPass = true;
+        try { RunPass(order, n, phase); } finally { inPass = false; }
+        active.RemoveAll(c => c.Done);
+    }
+
+    static void RunPass(List<CoroutineState> order, int n, Phase phase) {
         for (int i = 0; i < n; i++) {
             var c = order[i];
             if (c.Done) continue;
@@ -135,7 +149,6 @@ public static class Coroutines {
             }
             if (Ready(c, phase)) Step(c);
         }
-        active.RemoveAll(c => c.Done);
     }
 
     // ---- Invoke / InvokeRepeating ----
