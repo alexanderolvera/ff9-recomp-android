@@ -327,3 +327,30 @@ dialog, swap confirm, analog walk, volumes). Edit Memoria.ini stays for everythi
 - Mod archives are unpacked by their first bytes (ModDownloader.kind: 7z, zip; rar or a web page
   give a clear error), not by the link: KupoMail's Google Drive link has no ".7z" and the catalog no
   DownloadFormat, so its 7z was read as a zip, nothing came out and the move failed (issue 17, 0.1.9).
+
+## The Lost Chapters and Harmony (0.1.10, issue 14)
+
+- The mod loads its own 0Harmony.dll (Harmony 2.2.2, net35 build, with MonoMod inside) with
+  Assembly.LoadFrom and patches the game at run time (8 patches: IL edits, prefixes, postfixes).
+  Native/HarmonyCompat.cs makes that build work on .NET 8 Mono:
+  - Assembly.LoadFrom is detoured; a 0Harmony.dll is loaded from a rewritten copy: `call` to
+    System.Reflection.MethodBody members becomes `callvirt` (they weren't virtual in .NET 3.5, and
+    the base class's stubs throw or return null), and AppDomain.DefineDynamicAssembly (gone) is
+    pointed at the static AssemblyBuilder.DefineDynamicAssembly (MemberRef parent and signature
+    patched, the AppDomain.CurrentDomain push before each call turned into nops).
+  - MethodInvoker.GetHandler is replaced (AccessTools' static constructor passes the null
+    Exception.PrepForRemoting; others call through reflection).
+  - PatchInfoSerialization.Serialize/Deserialize keep patch lists as objects (BinaryFormatter is
+    not supported on Android).
+  MonoMod's DynamicMethodDefinition and its detour then work on ARM64 as they are.
+  FF9_TEST_HARMONY=path/to/0Harmony.dll patches a test method (prefix, postfix, transpiler,
+  re-patch, UnpatchAll) at the title and logs each step.
+- The crash: after the mod loads, SIGSEGV is back to SIG_DFL, so the game's ordinary null
+  reference in FieldMapActorController.MovePC on the first field killed the process instead of
+  becoming a NullReferenceException (the tester's crash happened with every Harmony hook failing,
+  too). The host saves Mono's SIGSEGV/SIGBUS handlers after start-up and the engine puts them back
+  each frame if they changed (ff9_keep_fault_handlers, Native/FaultHandlers.cs; logs once).
+- Debugging switches: FF9_TRACE_CRASH=1 (host: fault address, pc, frame-pointer walk with library
+  or managed method names; installed again at the title, ff9_crash_trace), FF9_TRACE_MODCALLS=1
+  (each message call into a Memoria.Scripts* assembly, so the last line before a crash names it).
+  env.txt only passes FF9_TEST_* and FF9_TRACE_* variables.

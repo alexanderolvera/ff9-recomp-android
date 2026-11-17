@@ -61,6 +61,7 @@ public static class Player {
     public static int Main(string[] args) {
         Native.DllImports.Install();
         Native.Compat.Install();
+        Native.HarmonyCompat.Watch();
         // FF9_TRACE_EXCEPTIONS=1 (files/env.txt): every exception as it is thrown, caught or not
         // (the game's save code catches its own and only reports a failure)
         if (Environment.GetEnvironmentVariable("FF9_TRACE_EXCEPTIONS") != null)
@@ -136,6 +137,7 @@ public static class Player {
     }
 
     static void Frame() {
+        Native.FaultHandlers.Tick();
         Clock.Tick();
         PollInput?.Invoke();
         // FixedUpdate at a fixed rate
@@ -157,6 +159,7 @@ public static class Player {
         Companion.Tick();
         UiSounds.Tick();
         MusicTrace.Tick();
+        HarmonyTest.Tick();
         TestLoad.Tick();
         TextInput.Tick();
         Widescreen.Tick();

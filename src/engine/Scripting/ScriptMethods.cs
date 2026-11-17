@@ -60,8 +60,14 @@ public sealed class ScriptMethods {
 
     /// Calls a message; exceptions are logged and swallowed, as Unity does. A message that
     /// returns IEnumerator (e.g. "IEnumerator Start()") is started as a coroutine.
+    static readonly bool traceMods = Environment.GetEnvironmentVariable("FF9_TRACE_MODCALLS") != null;
+
     public static void Call(Core.NMonoBehaviour mb, MethodInfo? mi, object? arg = null) {
         if (mi == null || mb.Managed == null) return;
+        // FF9_TRACE_MODCALLS=1: each call into a mod's script (assemblies not the game's), so the
+        // last line before a crash names it
+        if (traceMods && mi.DeclaringType?.Assembly is { } asm && asm != typeof(FF9StateSystem).Assembly && asm.GetName().Name!.StartsWith("Memoria.Scripts"))
+            Log.Info($"modcall {mi.DeclaringType!.FullName}.{mi.Name}");
         try {
             object? r = Invoker(mi)(mb.Managed, arg);
             if (r is IEnumerator e) Coroutines.Start(mb, e);

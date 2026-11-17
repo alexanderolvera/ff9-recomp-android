@@ -102,6 +102,95 @@ static char *join_dir(const char *dir, const char *ext, const char *const *skip,
     return acc;
 }
 
+/* FF9_TRACE_CRASH=1 (debugging): on SIGSEGV/SIGBUS, the fault address, pc and a frame-pointer walk
+   with the library and symbol of each frame, written to stdout (ff9.log), then Mono's handler
+   (which turns faults in managed code into NullReferenceException) */
+#include <dlfcn.h>
+#include <signal.h>
+#include <ucontext.h>
+static struct sigaction old_segv, old_bus;
+/* Mono's own SIGSEGV/SIGBUS handlers turn a null dereference in managed code into a
+   NullReferenceException. Something a mod loads (The Lost Chapters, with its Harmony) sets them
+   back to SIG_DFL, and the game's next null reference (FieldMapActorController.MovePC on the first
+   field) killed the process (GitHub issue 14). They are kept here and put back when they go. */
+static struct sigaction mono_segv, mono_bus;
+static int mono_saved;
+static void save_fault_handlers(void) {
+    sigaction(SIGSEGV, NULL, &mono_segv);
+    sigaction(SIGBUS, NULL, &mono_bus);
+    mono_saved = 1;
+}
+static int same_handler(const struct sigaction *a, const struct sigaction *b) {
+    return (a->sa_flags & SA_SIGINFO) == (b->sa_flags & SA_SIGINFO) &&
+           ((a->sa_flags & SA_SIGINFO) ? a->sa_sigaction == b->sa_sigaction : a->sa_handler == b->sa_handler);
+}
+static void crash_trace(int sig, siginfo_t *si, void *ucv);
+__attribute__((visibility("default"))) int ff9_keep_fault_handlers(void) {
+    if (!mono_saved) return 0;
+    int fixed = 0;
+    struct sigaction cur;
+    int sigs[2] = {SIGSEGV, SIGBUS};
+    struct sigaction *saved[2] = {&mono_segv, &mono_bus};
+    for (int i = 0; i < 2; i++) {
+        sigaction(sigs[i], NULL, &cur);
+        if (same_handler(&cur, saved[i]) || ((cur.sa_flags & SA_SIGINFO) && cur.sa_sigaction == crash_trace)) continue;
+        sigaction(sigs[i], saved[i], NULL);
+        fixed |= 1 << i;
+    }
+    return fixed;
+}
+static void trace_frame(const char *what, uintptr_t a) {
+    Dl_info d; char line[256]; int n;
+    if (a && dladdr((void *)a, &d) && d.dli_fname)
+        n = snprintf(line, sizeof line, "  %s %p %s+%#lx (%s)\n", what, (void *)a, strrchr(d.dli_fname, '/') ? strrchr(d.dli_fname, '/') + 1 : d.dli_fname,
+                     (unsigned long)(a - (uintptr_t)d.dli_fbase), d.dli_sname ? d.dli_sname : "?");
+    else {
+        MonoJitInfo *ji = a ? mono_jit_info_table_find(mono_get_root_domain(), (void *)a) : NULL;
+        MonoMethod *m = ji ? mono_jit_info_get_method(ji) : NULL;
+        char *name = m ? mono_method_full_name(m, 1) : NULL;
+        n = snprintf(line, sizeof line, "  %s %p %s+%#lx\n", what, (void *)a, name ? name : "(not a known method)",
+                     ji ? (unsigned long)(a - (uintptr_t)mono_jit_info_get_code_start(ji)) : 0ul);
+    }
+    write(1, line, n);
+}
+static void crash_trace(int sig, siginfo_t *si, void *ucv) {
+    ucontext_t *uc = ucv;
+    char line[128];
+    int n = snprintf(line, sizeof line, "fault: signal %d at %p\n", sig, si->si_addr);
+    write(1, line, n);
+    trace_frame("pc", uc->uc_mcontext.pc);
+    trace_frame("lr", uc->uc_mcontext.regs[30]);
+    uintptr_t *fp = (uintptr_t *)uc->uc_mcontext.regs[29];
+    for (int i = 0; i < 24 && fp && ((uintptr_t)fp & 7) == 0; i++) {
+        trace_frame("fp", fp[1]);
+        uintptr_t *next = (uintptr_t *)fp[0];
+        if (next <= fp) break;
+        fp = next;
+    }
+    struct sigaction *old = sig == SIGBUS ? (mono_saved ? &mono_bus : &old_bus) : (mono_saved ? &mono_segv : &old_segv);
+    if (old->sa_flags & SA_SIGINFO) old->sa_sigaction(sig, si, ucv);
+    else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) old->sa_handler(sig);
+    else { signal(sig, SIG_DFL); raise(sig); }
+}
+__attribute__((visibility("default"))) void ff9_crash_trace(void);
+static void install_crash_trace(void) { ff9_crash_trace(); }
+__attribute__((visibility("default"))) void ff9_crash_trace(void) {
+    if (!getenv("FF9_TRACE_CRASH")) return;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = crash_trace;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    struct sigaction prev_segv, prev_bus;
+    sigaction(SIGSEGV, &sa, &prev_segv);
+    sigaction(SIGBUS, &sa, &prev_bus);
+    if (prev_segv.sa_sigaction != crash_trace) old_segv = prev_segv;
+    if (prev_bus.sa_sigaction != crash_trace) old_bus = prev_bus;
+    Dl_info d;
+    void *h = (prev_segv.sa_flags & SA_SIGINFO) ? (void *)prev_segv.sa_sigaction : (void *)prev_segv.sa_handler;
+    printf("crash trace on; SIGSEGV was %s\n", h == (void *)SIG_DFL ? "SIG_DFL" : h == (void *)crash_trace ? "this trace"
+           : dladdr(h, &d) && d.dli_sname ? d.dli_sname : dladdr(h, &d) && d.dli_fname ? d.dli_fname : "unknown");
+}
+
 static void unhandled(MonoObject *exc, void *ud) {
     MonoString *s = mono_object_to_string(exc, NULL);
     char *u = s ? mono_string_to_utf8(s) : NULL;
@@ -428,6 +517,8 @@ __attribute__((visibility("default"))) int ff9_main(int argc, char **argv) {
     g_domain = mono_jit_init_version("ff9", "v4.0.30319");
     if (!g_domain) { printf("mono_jit_init failed\n"); return 1; }
     mono_install_unhandled_exception_hook(unhandled, NULL);
+    save_fault_handlers();
+    install_crash_trace();
     register_unity_icalls();
     printf("mono up in %.2f s, %d UnityEngine internal calls registered as stubs\n", now() - t0, ue_icall_count);
 
