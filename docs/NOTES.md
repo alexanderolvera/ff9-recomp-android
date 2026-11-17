@@ -324,3 +324,6 @@ dialog, swap confirm, analog walk, volumes). Edit Memoria.ini stays for everythi
 - The Lost Chapters (issue 14) patches the game at run time with HarmonyLib; AccessTools' static
   constructor fails here (MethodInvoker.GetHandler), and the game later dies with signal 11.
   Not supported.
+- Mod archives are unpacked by their first bytes (ModDownloader.kind: 7z, zip; rar or a web page
+  give a clear error), not by the link: KupoMail's Google Drive link has no ".7z" and the catalog no
+  DownloadFormat, so its 7z was read as a zip, nothing came out and the move failed (issue 17, 0.1.9).

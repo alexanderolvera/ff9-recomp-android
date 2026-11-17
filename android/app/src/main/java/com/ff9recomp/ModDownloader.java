@@ -58,7 +58,11 @@ final class ModDownloader {
             try {
                 status = "Unpacking " + m.name;
                 pr.update("Unpacking", 0, 0);
-                if (archive.getName().endsWith(".7z")) {
+                // by what the file is, not its link: KupoMail's link (Google Drive) has no ".7z" in
+                // it and the catalog gives no format, so its 7z was read as a zip, nothing came
+                // out, and the move failed (GitHub issue 17)
+                String kind = kind(archive);
+                if (kind.equals("7z")) {
                     Thread watch = new Thread(() -> {
                         while (busy && status.startsWith("Unpacking")) {
                             try {
@@ -72,10 +76,14 @@ final class ModDownloader {
                     watch.start();
                     String err = nativeUn7z(archive.getPath(), unpack.getPath());
                     if (err != null) throw new IOException(err);
-                } else {
+                } else if (kind.equals("zip")) {
                     unzip(archive, unpack);
+                } else {
+                    throw new IOException("the download is not a zip or 7z archive (" + kind + ")");
                 }
                 if (cancelled) throw new IOException("cancelled");
+                String[] got = unpack.list();
+                if (got == null || got.length == 0) throw new IOException("nothing came out of the archive");
                 File root = modRoot(unpack, m.folder);
                 File dest = ModCatalog.folder(c, m);
                 if (dest.exists()) Storage.deleteTree(dest);
@@ -96,6 +104,18 @@ final class ModDownloader {
     static File archive(Context c, ModCatalog.Mod m) {
         String ext = m.url.toLowerCase(Locale.ROOT).contains(".7z") || m.format.equalsIgnoreCase("7z") ? ".7z" : ".zip";
         return new File(new File(ModCatalog.dir(c), "downloads"), m.folder.replaceAll("[^A-Za-z0-9._-]", "_") + "-" + m.version + ext);
+    }
+
+    /** "7z" or "zip" by the file's first bytes, else what they look like ("rar", "html", "unknown"). */
+    static String kind(File f) throws IOException {
+        byte[] h = new byte[8];
+        int n;
+        try (InputStream in = new FileInputStream(f)) { n = in.read(h); }
+        if (n >= 6 && h[0] == '7' && h[1] == 'z' && (h[2] & 0xFF) == 0xBC && (h[3] & 0xFF) == 0xAF && h[4] == 0x27 && h[5] == 0x1C) return "7z";
+        if (n >= 4 && h[0] == 'P' && h[1] == 'K' && (h[2] == 3 || h[2] == 5) && (h[3] == 4 || h[3] == 6)) return "zip";
+        if (n >= 4 && h[0] == 'R' && h[1] == 'a' && h[2] == 'r' && h[3] == '!') return "rar";
+        if (n >= 1 && h[0] == '<') return "a web page, not the file";
+        return "unknown";
     }
 
     /** The folder holding the mod in the unpacked archive: the one named like it, else a lone top folder, else the top. */
