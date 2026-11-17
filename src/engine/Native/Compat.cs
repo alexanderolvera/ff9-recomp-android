@@ -48,19 +48,21 @@ public static class Compat {
         if (root == null || file == null || cloudFileName == null) { Log.Warn("cloud saves: the game's Cloud path functions were not found"); return; }
         Detour(root, M(nameof(CloudRootDir)));
         Detour(file, M(nameof(CloudFilePath)));
-        // Upload (Steam_Save's iterator) is replaced as well. Mono copies those two small functions
-        // (17 and 16 bytes of IL) into the code that calls them, which skips the redirect above.
-        // Upload then tried to write to "/data/Documents\Square Enix\...", which isn't writable, and
-        // failed without an error. Its MoveNext is called through IEnumerator, so it is never copied.
+        // Upload (Steam_Save's iterator) is replaced as well. Mono can copy small functions like those two
+        // (16 to 21 bytes of IL, depending on the Memoria build) into the code that calls them, which skips
+        // the redirect above. Upload then writes to "/data/Documents\Square Enix\...", which isn't writable,
+        // and fails without an error. Its MoveNext is called through IEnumerator, so it is never copied.
         const BindingFlags I = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         Type? iter = null, response = null;
         foreach (var n in social!.GetNestedTypes(BindingFlags.NonPublic | BindingFlags.Public)) {
-            if (n.Name.Contains("<Steam_Save>")) iter = n;
+            if (n.Name.StartsWith("<Steam_Save>")) iter = n;
             if (n.Name == "ResponseData") response = n;
         }
         var moveNext = iter?.GetMethod("MoveNext", I);
-        savePC = iter?.GetField("$PC", I);
-        saveCurrent = iter?.GetField("$current", I);
+        // The iterator's field names depend on the compiler that built Memoria's Assembly-CSharp:
+        // "$PC" and "$current" (Mono's mcs) or "<>1__state" and "<>2__current" (Roslyn). Both work the same way.
+        savePC = iter?.GetField("$PC", I) ?? iter?.GetField("<>1__state", I);
+        saveCurrent = iter?.GetField("$current", I) ?? iter?.GetField("<>2__current", I);
         saveData = iter?.GetField("data", I);
         responseCtor = response?.GetConstructor(I, null, new[] { typeof(object), typeof(object) }, null);
         responseData = response?.GetField("m_data", I);
