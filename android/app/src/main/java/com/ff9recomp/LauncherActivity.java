@@ -1421,7 +1421,8 @@ public class LauncherActivity extends Activity {
             else refresh();
         });
         col.addView(cb);
-        col.addView(note("Enable use of the Cloud Data menu on the game's title screen to sync with Steam Cloud."));
+        col.addView(note("Turns on the Cloud Data menu on the game's title screen, to upload and download your saves with Steam Cloud. "
+        + "An upload reaches Steam when you leave the game."));
         if (on) {
             String last = p.getString(Settings.CLOUD_LAST, null);
             col.addView(text(last != null ? "Last sync " + last : "Not synced yet.", 13, DIM));
@@ -1434,12 +1435,29 @@ public class LauncherActivity extends Activity {
     /** Set when Play synced with Steam Cloud. Tells onResume to sync again once the game has closed. */
     private boolean cloudAfterGame;
 
+    /** True when the device has a network that Android has confirmed reaches the internet. */
+    private boolean online() {
+        android.net.ConnectivityManager cm = getSystemService(android.net.ConnectivityManager.class);
+        android.net.NetworkCapabilities c = cm == null ? null : cm.getNetworkCapabilities(cm.getActiveNetwork());
+        return c != null && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    }
+
     /** True when Steam Cloud saves are turned on and the player is signed in to Steam. */
     private boolean cloudSaves() { return Settings.cloudSaves(this) && new SteamLink(this).signedIn(); }
 
     /** Syncs the Cloud menu's file with Steam Cloud on a thread. Sets the launcher to busy while syncing. */
     private void syncCloud(Runnable then) {
         if (busy) return;
+        // When offline cloud sync can cause the client to hang while the request times out, if offline we instead skip and show a status message.
+        if (!online()) {
+            String when = new java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()).format(new java.util.Date());
+            Settings.prefs(this).edit().putString(Settings.CLOUD_LAST, when + ": not synced (offline)").apply();
+            refresh();
+            status.setText("Steam Cloud not synced: you're offline.");
+            if (then != null) then.run();
+            return;
+        }
         busy = true;
         // Only grey out Play here, as steamSync does. Rebuilding the page now (refresh) would remove the
         // focused button, and the focus would land on a menu item, which opens its page.
